@@ -17,7 +17,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from . import clock, config, prompts
+from . import clock, config, prompts, providers
 from .schemas import TOOL_SCHEMAS
 from .tools import SophiaTools, ToolError
 
@@ -117,28 +117,13 @@ class SophiaAgent:
     @staticmethod
     def _build_client():
         """
-        Create the model client from config.
+        Create the model client for whichever provider is configured.
 
-        Groq is the default because voice needs fast inference. The Gemini
-        path is wired into config so it can be switched with one value,
-        but it is not implemented yet and says so rather than failing in
-        a confusing way later.
+        Groq or Gemini, switched by LLM_PROVIDER in .env. Both are
+        presented through the same interface, see providers.py, so nothing
+        in this file depends on which one is in use.
         """
-        if config.LLM.provider == "gemini":
-            raise NotImplementedError(
-                "The Gemini fallback is configured but not implemented yet. "
-                "Set LLM_PROVIDER=groq in your .env."
-            )
-
-        if not config.LLM.groq_api_key:
-            raise RuntimeError(
-                "No GROQ_API_KEY found. Copy .env.example to .env and add a key "
-                "from https://console.groq.com, which is free and needs no card."
-            )
-
-        from groq import Groq
-
-        return Groq(api_key=config.LLM.groq_api_key)
+        return providers.build_client()
 
     def _complete(self):
         """

@@ -8,6 +8,10 @@ python-dotenv==1.2.3
 # is unavailable to zoneinfo without this.
 tzdata==2026.4
 groq==1.7.0
+# Fallback provider. Groq is faster, but its free tier allows only 8000
+# tokens per minute, which a tool calling conversation can exhaust in a
+# single turn. See docs/ENGINEERING_LOG.md.
+google-genai==2.23.0
 fastapi==0.141.1
 uvicorn[standard]==0.53.0
 pydantic==2.13.5

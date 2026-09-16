@@ -122,10 +122,19 @@ EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 @dataclass(frozen=True)
 class LLMSettings:
-    """Which language model Sophia talks through."""
+    """
+    Which language model Sophia talks through.
+
+    The key fields carry repr=False. A dataclass puts every field in its
+    repr by default, so any traceback that touched this object printed
+    both API keys in full. That happened once, into a test failure, which
+    is exactly how a key ends up in a log file or a screenshot.
+    """
 
     provider: str = field(default_factory=lambda: _env("LLM_PROVIDER", "groq"))
-    groq_api_key: str = field(default_factory=lambda: _env("GROQ_API_KEY", ""))
+    groq_api_key: str = field(
+        default_factory=lambda: _env("GROQ_API_KEY", ""), repr=False
+    )
     # Checked against the live /models endpoint on 16 September 2026.
     # llama-3.3-70b-versatile was in Groq's docs but has been retired from
     # the API, so it is not usable. gpt-oss-120b follows instructions well
@@ -139,9 +148,15 @@ class LLMSettings:
     reasoning_effort: str = field(
         default_factory=lambda: _env("GROQ_REASONING_EFFORT", "low")
     )
-    gemini_api_key: str = field(default_factory=lambda: _env("GEMINI_API_KEY", ""))
+    gemini_api_key: str = field(
+        default_factory=lambda: _env("GEMINI_API_KEY", ""), repr=False
+    )
+    # Probed against the account on 16 September 2026. The larger flash
+    # models were returning 503 "high demand" and gemini-3.6-flash took
+    # 32 seconds for a single tool call. flash-lite answered in under a
+    # second with tool calling intact, which is what a voice agent needs.
     gemini_model: str = field(
-        default_factory=lambda: _env("GEMINI_MODEL", "gemini-3.8-flash")
+        default_factory=lambda: _env("GEMINI_MODEL", "gemini-3.5-flash-lite")
     )
 
     @property
@@ -157,7 +172,9 @@ class LLMSettings:
 class SpeechSettings:
     """Speech to text and text to speech. Only needed from Day 4."""
 
-    deepgram_api_key: str = field(default_factory=lambda: _env("DEEPGRAM_API_KEY", ""))
+    deepgram_api_key: str = field(
+        default_factory=lambda: _env("DEEPGRAM_API_KEY", ""), repr=False
+    )
     stt_model: str = field(default_factory=lambda: _env("DEEPGRAM_STT_MODEL", "nova-3"))
     stt_language: str = field(
         default_factory=lambda: _env("DEEPGRAM_STT_LANGUAGE", "en-GB")
