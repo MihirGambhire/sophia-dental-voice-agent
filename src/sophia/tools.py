@@ -239,6 +239,10 @@ class SophiaTools:
         # agent. None means the tools are being used directly, by a test or
         # a script, where there is no caller whose words to check against.
         self.caller_heard: list[str] | None = None
+        # Set on an outbound call: the only patient who may be verified, and
+        # the queued reminder the call belongs to. See outbound.py.
+        self.expected_patient_id: int | None = None
+        self.reminder = None
         self.offered_slots: list[dict] = []
         self.offered_urgent: list[dict] = []
         self.bookings_made: list[dict] = []
@@ -399,6 +403,17 @@ class SophiaTools:
             ]
             if len(near) == 1:
                 match = near[0]
+
+        # On an outbound call, only the patient Sophia rang counts. Someone
+        # else in the household passing the identity check with their own
+        # details must not unlock the patient's appointment. Refused with
+        # the same answer as a mismatch, so nothing is revealed either way.
+        if (
+            match is not None
+            and self.expected_patient_id is not None
+            and match["id"] != self.expected_patient_id
+        ):
+            match = None
 
         if match is not None:
             self.verified_patient_id = match["id"]
@@ -998,6 +1013,28 @@ class SophiaTools:
         }
 
     # -- 6. messages ------------------------------------------------------
+
+    def record_call_outcome(self, outcome: str, note: str | None = None) -> dict:
+        """
+        Record how an outbound reminder call ended.
+
+        Only valid on an outbound call. "wrong_person" and "call_back_later"
+        need no verification, because recording them reveals nothing. Any
+        outcome that describes what the patient decided needs the patient to
+        have been verified first, so the call list can never say "confirmed"
+        on the word of whoever happened to answer.
+        """
+        from . import outbound
+
+        if self.reminder is None:
+            raise ToolError("record_call_outcome is only for outbound reminder calls.")
+        if outcome not in outbound.OUTCOMES:
+            raise ToolError(f"Unknown outcome {outcome}. Use one of: {', '.join(outbound.OUTCOMES)}.")
+        if outcome not in ("wrong_person", "call_back_later"):
+            self._require_verified()
+
+        outbound.record_outcome(self.conn, self.reminder, outcome)
+        return {"recorded": True, "outcome": outcome}
 
     def take_message(
         self,

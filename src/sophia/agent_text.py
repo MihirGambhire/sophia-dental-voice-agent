@@ -18,8 +18,8 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from . import clock, config, prompts, providers, safety
-from .schemas import TOOL_SCHEMAS
+from . import clock, config, outbound, prompts, providers, safety
+from .schemas import OUTBOUND_TOOL_SCHEMAS, TOOL_SCHEMAS
 from .tools import SophiaTools, ToolError
 
 # A single turn should never need more than a handful of tool calls. If it
@@ -129,7 +129,7 @@ class TurnRecord:
 class SophiaAgent:
     """One conversation with one caller."""
 
-    def __init__(self, conn, now: datetime | None = None, client=None):
+    def __init__(self, conn, now: datetime | None = None, client=None, reminder=None):
         self.conn = conn
         self.tools = SophiaTools(conn, now=now)
         # Lets the tools check identifiers against what the caller really
@@ -140,9 +140,21 @@ class SophiaAgent:
         self.history: list[TurnRecord] = []
         self.last_screening: safety.Screening | None = None
 
+        # An outbound reminder call, if Sophia placed this call. The model
+        # is only ever told the patient's name; see outbound.py for why.
+        self.reminder = reminder
+        self.tools.reminder = reminder
+        self.tool_schemas = list(TOOL_SCHEMAS)
+        if reminder is not None:
+            self.tools.expected_patient_id = reminder.patient_id
+            self.tool_schemas += OUTBOUND_TOOL_SCHEMAS
+            self.greeting = outbound.greeting(reminder)
+        else:
+            self.greeting = prompts.GREETING
+
         self.messages: list[dict] = [
             {"role": "system", "content": prompts.system_prompt(self.now)},
-            {"role": "assistant", "content": prompts.GREETING},
+            {"role": "assistant", "content": self.greeting},
         ]
 
     # -- model access -----------------------------------------------------
@@ -176,7 +188,7 @@ class SophiaAgent:
         request = dict(
             model=config.LLM.model,
             messages=messages,
-            tools=TOOL_SCHEMAS,
+            tools=self.tool_schemas,
             tool_choice="auto",
             temperature=0.3,  # low, because this job rewards consistency
             max_completion_tokens=500,
@@ -201,6 +213,9 @@ class SophiaAgent:
         about forty tokens and removes the need for any of that.
         """
         lines = ["CALL STATE, carried forward. Do not call tools to rediscover this."]
+
+        if self.reminder is not None:
+            lines.append(outbound.call_context(self.reminder))
 
         if self.tools.verified_patient_id:
             lines.append(f"Verified caller: {self.tools.verified_name}. Do not verify again.")

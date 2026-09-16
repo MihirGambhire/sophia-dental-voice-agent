@@ -349,7 +349,7 @@ def test_the_prompt_does_not_hardcode_prices(conn):
 def test_the_tools_are_offered_on_every_request(conn):
     agent = agent_with(conn, [text_response("ok")])
     agent.say("hello")
-    assert agent.client.requests[0]["tools"] is TOOL_SCHEMAS
+    assert agent.client.requests[0]["tools"] == TOOL_SCHEMAS
 
 
 def test_history_records_latency_for_each_turn(conn):

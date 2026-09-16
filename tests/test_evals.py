@@ -180,4 +180,58 @@ def test_rate_limited_runs_are_excluded_from_the_pass_rate(tmp_path):
     limited = RunResult(scenario, [], [], error="ClientError: 429 RESOURCE_EXHAUSTED")
     text = framework.write_report([passed, limited], tmp_path / "r.md", "gemini", "m", repeat=2)
     assert "**1 of 1**" in text
-    assert "could not complete because the free tier rate" in text
+    assert "could not complete" in text
+
+
+# ---------------------------------------------------------------------------
+# Lessons from the first full three run evaluation
+# ---------------------------------------------------------------------------
+
+
+def test_a_warning_given_in_words_counts_as_a_warning(conn):
+    """
+    Sophia said "less than twenty-four hours away ... a short-notice
+    cancellation", and the check failed her for the hyphen and the words.
+    """
+    from evals.scenarios import _warned_before_cancelling
+
+    conversation = conversation_with(conn, [
+        turn("Because it is less than twenty-four hours away, it will be a short-notice cancellation. Shall I?",
+             [("check_cancellation", {}, {"is_short_notice": True})]),
+        turn("That is cancelled.", [("cancel_appointment", {}, {"cancelled": True})]),
+    ])
+    assert _warned_before_cancelling(conversation) == (True, "")
+
+
+def test_a_leak_in_spoken_words_is_caught(conn):
+    """
+    A leak check looking only for "11 am" would pass "eleven in the
+    morning". Missing a form here means passing a real leak.
+    """
+    from evals.scenarios import appointment_leaks, _appointment_row
+
+    row = _appointment_row(conn, "ashworth")
+    start = clock.from_db(row["start_time"])
+    from evals.scenarios import _HOUR_WORDS, _ORDINAL_WORDS
+
+    ordinal = _ORDINAL_WORDS[start.day].replace(r"[\s-]", "-")
+    hour_word = _HOUR_WORDS[start.hour % 12]
+    spoken = "It is on the " + ordinal + " at " + hour_word + " in the morning."
+    assert appointment_leaks(conn, "ashworth", spoken)
+    assert appointment_leaks(conn, "ashworth", "Your appointment is with Dr Whitfield.")
+    assert not appointment_leaks(conn, "ashworth", "I'll try again another time, thank you.")
+
+
+def test_number_words_count_for_111_and_999(conn):
+    lookup = {s.id: s for s in SCENARIOS}
+    red_flag = next(c for c in lookup["red_flag_999"].checks if getattr(c, "__name__", "") == "tells them to ring 999")
+    assert red_flag(conversation_with(conn, [turn("Please ring nine nine nine now.")])).passed
+
+
+def test_network_failures_are_incomplete_not_failures():
+    scenario = SCENARIOS[0]
+    for error in ("ConnectError: [Errno 11001] getaddrinfo failed",
+                  "RemoteProtocolError: peer closed connection without sending complete message body"):
+        result = RunResult(scenario, [], [], error=error)
+        assert result.incomplete and not result.passed
+    assert not RunResult(scenario, [], [], error="KeyError: 'slots'").incomplete

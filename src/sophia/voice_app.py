@@ -67,7 +67,7 @@ from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketTransport,
 )
 
-from . import config, db, prompts, web_audio
+from . import config, db, outbound, prompts, web_audio
 from .agent_text import SophiaAgent
 
 
@@ -344,6 +344,7 @@ def build_pipeline(
     transport,
     on_event: Callable[[dict], None] | None = None,
     sample_rate: int | None = None,
+    reminder_id: int | None = None,
 ) -> tuple[PipelineTask, SophiaAgent]:
     """
     Assemble one call around whichever transport carries the audio.
@@ -358,7 +359,13 @@ def build_pipeline(
     # Opened here on the event loop thread, used from worker threads by
     # agent.say. SophiaVoiceProcessor's lock keeps it to one turn at a time.
     conn = db.connect(shared_across_threads=True)
-    agent = SophiaAgent(conn)
+
+    # An outbound reminder call when a reminder is given: Sophia speaks
+    # first as if she had rung the patient.
+    reminder = outbound.load(conn, reminder_id) if reminder_id is not None else None
+    if reminder is not None:
+        outbound.mark_started(conn, reminder)
+    agent = SophiaAgent(conn, reminder=reminder)
 
     stt = DeepgramSTTService(
         api_key=config.SPEECH.deepgram_api_key,
@@ -401,11 +408,11 @@ def build_pipeline(
 
     @transport.event_handler("on_client_connected")
     async def _greet(_transport, _client):
-        """Sophia speaks first, as a receptionist does."""
+        """Sophia speaks first, as a receptionist does, or as the caller on an outbound call."""
         if on_event:
-            on_event({"type": "sophia", "text": prompts.GREETING, "tools": []})
-        sophia.set_spoken_text(prompts.GREETING)
-        await task.queue_frames([TTSSpeakFrame(prompts.GREETING)])
+            on_event({"type": "sophia", "text": agent.greeting, "tools": []})
+        sophia.set_spoken_text(agent.greeting)
+        await task.queue_frames([TTSSpeakFrame(agent.greeting)])
 
     @transport.event_handler("on_client_disconnected")
     async def _hang_up(_transport, _client):
@@ -520,6 +527,15 @@ def create_app() -> FastAPI:
         """
         return {"iceServers": config.ice_servers()}
 
+    @app.get("/api/reminders")
+    async def reminders():
+        """The outbound call list, for the practice side of the demo page."""
+        conn = db.connect()
+        try:
+            return {"calls": outbound.pending(conn)}
+        finally:
+            conn.close()
+
     @app.get("/api/events")
     async def events(after: int = 0):
         """
@@ -566,7 +582,7 @@ def create_app() -> FastAPI:
         return connection.get_answer()
 
     @app.websocket("/ws")
-    async def call_over_websocket(websocket: WebSocket):
+    async def call_over_websocket(websocket: WebSocket, reminder: int | None = None):
         """
         A call carried entirely over one WebSocket.
 
@@ -604,7 +620,7 @@ def create_app() -> FastAPI:
             ),
         )
         task, _agent = build_pipeline(
-            transport, on_event=record, sample_rate=web_audio.SAMPLE_RATE
+            transport, on_event=record, sample_rate=web_audio.SAMPLE_RATE, reminder_id=reminder
         )
 
         # Unlike the WebRTC offer, this request IS the call, so it is

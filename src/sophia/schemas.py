@@ -160,6 +160,26 @@ TOOL_SCHEMAS: list[dict] = [
 ]
 
 
+# Only sent on outbound calls. Inbound calls never pay its token cost.
+OUTBOUND_TOOL_SCHEMAS: list[dict] = [
+    _tool(
+        "record_call_outcome",
+        "Outbound calls only. Record how the call ended before it finishes.",
+        {
+            "outcome": {
+                "type": "string",
+                "enum": [
+                    "confirmed", "rescheduled", "cancelled", "booked_check_up",
+                    "declined", "wrong_person", "call_back_later",
+                ],
+            },
+            "note": _STRING,
+        },
+        ["outcome"],
+    ),
+]
+
+
 def tool_names() -> list[str]:
     """Just the names, used by tests and by the dispatcher."""
     return [schema["function"]["name"] for schema in TOOL_SCHEMAS]

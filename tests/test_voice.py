@@ -604,7 +604,7 @@ def test_the_greeting_is_registered_so_its_echo_is_ignored():
     registered, its echo would be the first thing the caller "said".
     """
     source = (Path(__file__).resolve().parents[1] / "src" / "sophia" / "voice_app.py").read_text(encoding="utf-8")
-    assert "sophia.set_spoken_text(prompts.GREETING)" in source
+    assert "sophia.set_spoken_text(agent.greeting)" in source
 
 
 def test_the_page_no_longer_mutes_the_microphone_while_she_speaks():

@@ -35,7 +35,7 @@ def main() -> None:
     parser.add_argument("--list", action="store_true", help="list scenarios and exit")
     # Gemini free tier: 15 requests a minute per model, and one turn can be
     # several requests. A pause between turns keeps most runs under it.
-    parser.add_argument("--turn-pause", type=float, default=3.0, help="seconds between turns")
+    parser.add_argument("--turn-pause", type=float, default=5.0, help="seconds between turns")
     parser.add_argument("--rate-limit-retries", type=int, default=3)
     parser.add_argument("--out", default=str(ROOT / "docs" / "EVAL_RESULTS.md"))
     args = parser.parse_args()
@@ -67,14 +67,17 @@ def main() -> None:
             # provider asks, then rerun the whole scenario from a fresh
             # database rather than resuming a half finished conversation.
             for _ in range(args.rate_limit_retries):
-                if not result.rate_limited:
+                if not result.incomplete:
                     break
-                wait = retry_delay_seconds(result.error)
-                print(f"  [WAIT] {scenario.title}: rate limited, retrying in {wait:.0f}s")
+                # The quota is a rolling 60 second window, so a shorter wait just
+                # walks straight back into it. The first full run did exactly that.
+                wait = max(60.0, retry_delay_seconds(result.error)) if result.rate_limited else 15.0
+                why = "rate limited" if result.rate_limited else "network error"
+                print(f"  [WAIT] {scenario.title}: {why}, retrying in {wait:.0f}s")
                 time.sleep(wait)
                 result = run_scenario(scenario, turn_pause=args.turn_pause)
             results.append(result)
-            mark = "PASS" if result.passed else ("RATE" if result.rate_limited else "FAIL")
+            mark = "PASS" if result.passed else ("SKIP" if result.incomplete else "FAIL")
             suffix = f" (run {attempt + 1})" if args.repeat > 1 else ""
             print(f"  [{mark}] {scenario.title}{suffix}  {time.time() - t0:.0f}s")
             if result.error:
@@ -83,12 +86,12 @@ def main() -> None:
                 if not check.passed:
                     print(f"         - {check.name} ({check.layer}): {check.detail[:140]}")
 
-    limited = sum(result.rate_limited for result in results)
+    limited = sum(result.incomplete for result in results)
     counted = len(results) - limited
     passed = sum(result.passed for result in results)
     write_report(results, Path(args.out), config.LLM.provider, config.LLM.model, args.repeat)
     print(f"\n{passed} of {counted} runs passed in {time.time() - started:.0f}s"
-          + (f", {limited} excluded after repeated rate limiting" if limited else ""))
+          + (f", {limited} excluded after repeated rate limits or network errors" if limited else ""))
     print(f"Report: {args.out}\n")
 
 

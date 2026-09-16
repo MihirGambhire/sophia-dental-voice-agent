@@ -79,6 +79,12 @@
   .empty { color: var(--muted); font-size: 14px; }
   .err { color: var(--danger); font-size: 14px; margin-top: 10px; }
   footer { margin-top: 26px; font-size: 12.5px; color: var(--muted); }
+  .call-row { display: flex; gap: 12px; align-items: center; justify-content: space-between;
+              padding: 10px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+  .call-row:first-child { border-top: 0; }
+  .call-row .who-call { font-weight: 600; }
+  .call-row button { padding: 7px 14px; font-size: 14px; background: #fff;
+                     color: var(--accent); border-color: #c9dafc; }
 </style>
 </head>
 <body>
@@ -101,6 +107,16 @@
     </div>
     <div class="err" id="error" hidden></div>
     <div class="meta" id="setup" style="margin-top:12px"></div>
+  </div>
+
+  <div class="card">
+    <h2>Outbound reminder calls</h2>
+    <div class="meta" style="margin:-4px 0 12px">
+      The practice's call list. Press <b>Answer</b> to play the person picking up the phone.
+      Sophia speaks first, as if she has rung them. Try answering as the patient, then again
+      as somebody else in the house.
+    </div>
+    <div id="reminders"><div class="empty">Loading the call list...</div></div>
   </div>
 
   <div class="card">
@@ -274,7 +290,9 @@ function stopPlayback() {
   playHead = ctx ? ctx.currentTime : 0;
 }
 
-callBtn.onclick = async () => {
+callBtn.onclick = () => startCall(null);
+
+async function startCall(reminderId) {
   showError('');
   callBtn.disabled = true;
   setState('Asking for the microphone', 'connecting');
@@ -304,7 +322,8 @@ callBtn.onclick = async () => {
     await ctx.audioWorklet.addModule(workletUrl);
 
     const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-    ws = new WebSocket(`${scheme}://${location.host}/ws`);
+    const query = reminderId ? `?reminder=${reminderId}` : '';
+    ws = new WebSocket(`${scheme}://${location.host}/ws${query}`);
     ws.binaryType = 'arraybuffer';
 
     ws.onopen = () => {
@@ -349,7 +368,7 @@ callBtn.onclick = async () => {
     showError(e.message);
     cleanup('Not connected');
   }
-};
+}
 
 function cleanup(message) {
   if (poller) { poll(); clearInterval(poller); poller = null; }
@@ -360,11 +379,51 @@ function cleanup(message) {
   stopPlayback();
   if (ctx) { ctx.close(); ctx = null; }
   setState(message || 'Not connected');
+  setTimeout(loadReminders, 800);
   callBtn.disabled = false;
   hangBtn.disabled = true;
 }
 
 hangBtn.onclick = () => cleanup('Call ended');
+
+const OUTCOME_LABELS = {
+  confirmed: 'Confirmed', rescheduled: 'Moved', cancelled: 'Cancelled',
+  booked_check_up: 'Booked a check up', declined: 'Declined',
+  wrong_person: 'Someone else answered', call_back_later: 'Call back later',
+  no_outcome_recorded: 'Called, no outcome recorded'
+};
+
+async function loadReminders() {
+  const list = document.getElementById('reminders');
+  try {
+    const { calls } = await (await fetch('/api/reminders')).json();
+    if (!calls.length) { list.innerHTML = '<div class="empty">Nothing to call.</div>'; return; }
+    list.innerHTML = '';
+    for (const call of calls) {
+      const row = document.createElement('div');
+      row.className = 'call-row';
+      const info = document.createElement('div');
+      const name = document.createElement('div');
+      name.className = 'who-call';
+      name.textContent = call.patient;
+      const detail = document.createElement('div');
+      detail.className = 'meta';
+      detail.style.marginTop = '0';
+      const why = call.reason === 'day_before' ? 'Reminder: ' + call.appointment : 'Due a check up';
+      const state = call.status === 'pending' ? 'Not called yet' : (OUTCOME_LABELS[call.outcome] || call.outcome);
+      detail.textContent = why + '  |  ' + state;
+      info.append(name, detail);
+      const button = document.createElement('button');
+      button.textContent = 'Answer';
+      button.onclick = () => { if (!ws) startCall(call.id); };
+      row.append(info, button);
+      list.appendChild(row);
+    }
+  } catch (e) {
+    list.innerHTML = '<div class="empty">Could not load the call list.</div>';
+  }
+}
+loadReminders();
 </script>
 </body>
 </html>

@@ -131,6 +131,8 @@ class Scenario:
     checks: list[Check]
     at: Callable[[object], datetime]
     setup: Callable[[object], None] | None = None
+    # For outbound calls: returns the reminder_queue id Sophia is calling about.
+    reminder: Callable[[object], int] | None = None
     goal: Callable[[Conversation], bool] | None = None
     confirm_with: str = "Yes please, go ahead."
     max_confirms: int = 2
@@ -155,6 +157,11 @@ class RunResult:
         return is_rate_limited(self.error)
 
     @property
+    def incomplete(self) -> bool:
+        """Did not finish, for reasons that say nothing about Sophia."""
+        return is_rate_limited(self.error) or is_infrastructure_error(self.error)
+
+    @property
     def passed(self) -> bool:
         return self.error is None and all(check.passed for check in self.checks)
 
@@ -166,6 +173,19 @@ class RunResult:
 
 def is_rate_limited(error: str | None) -> bool:
     return bool(error) and ("429" in error or "RESOURCE_EXHAUSTED" in error)
+
+
+# Failures of the connection rather than of anything Sophia did. The first
+# full run lost four scenarios to these, including a laptop DNS failure,
+# and the report would otherwise have counted them against her.
+_NETWORK_ERRORS = (
+    "ConnectError", "ConnectTimeout", "ReadTimeout", "RemoteProtocolError",
+    "getaddrinfo", "Connection aborted", "ServerError", "503 UNAVAILABLE",
+)
+
+
+def is_infrastructure_error(error: str | None) -> bool:
+    return bool(error) and any(marker in error for marker in _NETWORK_ERRORS)
 
 
 def retry_delay_seconds(error: str | None, default: float = 40.0) -> float:
@@ -182,7 +202,12 @@ def run_scenario(scenario: Scenario, turn_pause: float = 0.0) -> RunResult:
             if scenario.setup:
                 scenario.setup(conn)
             now = scenario.at(conn)
-            agent = SophiaAgent(conn, now=now)
+            reminder = None
+            if scenario.reminder:
+                from sophia import outbound
+
+                reminder = outbound.load(conn, scenario.reminder(conn))
+            agent = SophiaAgent(conn, now=now, reminder=reminder)
             conversation = Conversation(agent=agent, conn=conn, started_at=now)
 
             try:
@@ -337,8 +362,8 @@ def percentile(values: list[float], fraction: float) -> float:
 
 def write_report(results: list[RunResult], path: Path, provider: str, model: str, repeat: int) -> str:
     """A markdown report, written for someone reading the repository."""
-    limited = [result for result in results if result.rate_limited]
-    results = [result for result in results if not result.rate_limited]
+    limited = [result for result in results if result.incomplete]
+    results = [result for result in results if not result.incomplete]
 
     by_scenario: dict[str, list[RunResult]] = {}
     for result in results:
@@ -386,8 +411,8 @@ def write_report(results: list[RunResult], path: Path, provider: str, model: str
         "",
         *(
             [
-                f"{len(limited)} further run(s) could not complete because the free tier rate",
-                "limit was still being hit after waiting, and are excluded from the figures",
+                f"{len(limited)} further run(s) could not complete, because the free tier rate",
+                "limit was still being hit after waiting or the network failed, and are excluded from the figures",
                 "above: " + ", ".join(sorted({r.scenario.title for r in limited})) + ".",
                 "",
             ]
