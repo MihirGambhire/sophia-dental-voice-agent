@@ -823,3 +823,139 @@ def test_an_unknown_fee_is_refused_rather_than_guessed(conn):
     session = at(conn, a_weekday_at(10))
     with pytest.raises(ToolError, match="no appointment type"):
         session.get_fee("TOOTH_WHITENING")
+
+
+# ---------------------------------------------------------------------------
+# Verification problems found on live voice calls
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("postcode", ["", "  ", "unknown", "not provided"])
+def test_verifying_before_the_postcode_is_given_asks_for_it(conn, postcode):
+    """
+    The model called verify_patient with only a name and date of birth, and
+    the caller was told no record existed. A missing detail is now asked
+    for, which reveals nothing about any patient.
+    """
+    session = at(conn, a_weekday_at(10))
+    result = session.verify_patient("Margaret Hollis", "1958-03-12", postcode)
+
+    assert not result["verified"]
+    assert result["reason"] == "missing_details"
+    assert result["missing"] == ["postcode"]
+    assert "postcode" in result["say"]
+    assert "cannot find" not in result["say"]
+
+
+def test_a_misheard_surname_still_verifies_when_date_and_postcode_match(conn):
+    """Speech to text heard "Hollis" as "Hollies" on a real call."""
+    session = at(conn, a_weekday_at(10))
+    result = session.verify_patient("Margaret Hollies", "1958-03-12", "WA1 2NF")
+    assert result["verified"]
+    assert session.verified_name == "Margaret Hollis"
+
+
+def test_a_different_name_does_not_verify_even_with_the_right_date_and_postcode(conn):
+    session = at(conn, a_weekday_at(10))
+    result = session.verify_patient("Susan Pritchard", "1958-03-12", "WA1 2NF")
+    assert not result["verified"]
+    assert session.verified_patient_id is None
+
+
+def test_twins_at_one_address_are_not_confused_by_a_close_name(conn):
+    """
+    Two records with the same date of birth and postcode and similar names:
+    a fuzzy match must refuse rather than pick one.
+    """
+    conn.execute(
+        "INSERT INTO patients (code, full_name, dob, postcode, patient_type) "
+        "VALUES ('twin_a', 'Jamie Clarke', '2001-05-05', 'WA1 1AA', 'nhs'), "
+        "       ('twin_b', 'James Clarke', '2001-05-05', 'WA1 1AA', 'nhs')"
+    )
+    conn.commit()
+    session = at(conn, a_weekday_at(10))
+
+    assert not session.verify_patient("Jame Clarke", "2001-05-05", "WA1 1AA")["verified"]
+    # An exact name still works for either twin.
+    assert session.verify_patient("James Clarke", "2001-05-05", "WA1 1AA")["verified"]
+    assert session.verified_name == "James Clarke"
+
+
+@pytest.mark.parametrize(
+    "spoken",
+    ["March 12. 1958.", "12th March 1958", "twelfth", "12 of March, 1958", "March 12th, 1958"],
+)
+def test_spoken_date_shapes_are_understood(conn, spoken):
+    session = at(conn, a_weekday_at(10))
+    result = session.verify_patient("Margaret Hollis", spoken, "WA1 2NF")
+    if spoken == "twelfth":
+        assert result["reason"] == "date_not_understood"
+    else:
+        assert result["verified"], f"did not understand {spoken!r}"
+
+
+def test_a_postcode_said_letter_by_letter_is_understood(conn):
+    session = at(conn, a_weekday_at(10))
+    assert session.verify_patient("Margaret Hollis", "1958-03-12", "W A 1 2 N F")["verified"]
+
+
+def test_a_postcode_that_is_not_a_uk_postcode_is_asked_for_again(conn):
+    """A tester gave an Indian PIN code, which should be re-asked, not searched."""
+    session = at(conn, a_weekday_at(10))
+    result = session.verify_patient("Mihir Gambhire", "2004-04-13", "411027")
+    assert result["reason"] == "postcode_not_understood"
+
+
+# ---------------------------------------------------------------------------
+# Identifiers must come from the caller, not the model
+# ---------------------------------------------------------------------------
+
+
+def listening_session(conn, *utterances):
+    session = at(conn, a_weekday_at(10))
+    session.caller_heard = list(utterances)
+    return session
+
+
+def test_an_invented_postcode_is_refused_and_asked_for(conn):
+    """
+    Captured on a real run: the model called verify_patient with WA1 1LZ,
+    a postcode the caller never said, and the caller was told no record
+    existed. The tool now checks the caller's own words.
+    """
+    session = listening_session(conn, "Margaret Hollis", "March 12. 1958.")
+    result = session.verify_patient("Margaret Hollis", "1958-03-12", "WA1 1LZ")
+
+    assert result["reason"] == "missing_details"
+    assert result["missing"] == ["postcode"]
+    assert session.verified_patient_id is None
+
+
+def test_a_postcode_the_caller_said_is_accepted(conn):
+    session = listening_session(conn, "Margaret Hollis", "March 12. 1958.", "W A 1, 2 N F")
+    assert session.verify_patient("Margaret Hollis", "1958-03-12", "WA1 2NF")["verified"]
+
+
+def test_a_postcode_read_as_number_words_is_accepted(conn):
+    session = listening_session(conn, "Margaret Hollis", "March 12 1958", "W A one, two N F")
+    assert session.verify_patient("Margaret Hollis", "1958-03-12", "WA1 2NF")["verified"]
+
+
+def test_one_letter_lost_by_speech_to_text_still_verifies(conn):
+    """Heard as "W one two n f" on a real call, the A was dropped."""
+    session = listening_session(conn, "Margaret Hollis", "March 12. 1958.", "W one two n f")
+    result = session.verify_patient("Margaret Hollis", "1958-03-12", "W1 2NF")
+    assert result["verified"]
+    assert session.verified_name == "Margaret Hollis"
+
+
+def test_a_one_character_postcode_slip_needs_the_name_to_be_right_too(conn):
+    session = listening_session(conn, "Susan Pritchard", "12 March 1958", "W one two n f")
+    assert not session.verify_patient("Susan Pritchard", "1958-03-12", "W1 2NF")["verified"]
+
+
+def test_without_a_caller_the_tools_do_not_check_spoken_words(conn):
+    """Scripts and tests use the tools directly, with no call to check against."""
+    session = at(conn, a_weekday_at(10))
+    assert session.caller_heard is None
+    assert session.verify_patient("Margaret Hollis", "1958-03-12", "WA1 2NF")["verified"]

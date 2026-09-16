@@ -172,7 +172,7 @@ def test_a_tool_call_is_run_and_the_result_fed_back(conn):
         ],
     )
 
-    turn = agent.say("It's Margaret Hollis")
+    turn = agent.say(f"It's Margaret Hollis, {row['dob']}, {row['postcode']}")
 
     assert turn.tools_used == ["verify_patient"]
     assert agent.tools.verified_patient_id == row["id"]
@@ -466,7 +466,7 @@ def test_a_cancellation_needs_the_check_step_first(conn):
         when=when,
     )
 
-    turn = agent.say("Daniel Okafor, cancel my appointment")
+    turn = agent.say(f"Daniel Okafor, {row['dob']}, {row['postcode']}, cancel my appointment")
 
     still_booked = conn.execute(
         "SELECT status FROM appointments WHERE id = ?", (appointment["id"],)
@@ -474,3 +474,100 @@ def test_a_cancellation_needs_the_check_step_first(conn):
     assert still_booked["status"] == "booked"
 
     assert "not confirmed" in turn.result_for("cancel_appointment")["error"]
+
+
+# ---------------------------------------------------------------------------
+# Claims that contradict the call state never reach the caller
+# ---------------------------------------------------------------------------
+
+
+def test_a_false_claim_of_verification_is_replaced(conn):
+    """
+    On a live phone test Sophia said "I've got you verified now" when no
+    identity check had run, for details matching no patient. The prompt
+    already forbade it. The reply is now checked against the call state.
+    """
+    agent = agent_with(
+        conn,
+        [text_response("Sorry about that, Vandana, I've got you verified now. How can I help?")],
+    )
+    turn = agent.say("five two nine")
+
+    assert agent.tools.verified_patient_id is None
+    assert "verified" not in turn.reply.lower()
+    assert "date of birth" in turn.reply
+    assert turn.corrected_claim and "verified" in turn.corrected_claim
+    assert agent.messages[-1]["content"] == turn.reply
+
+
+def test_a_true_verification_is_left_alone(conn):
+    row = conn.execute("SELECT * FROM patients WHERE code = 'hollis'").fetchone()
+    agent = agent_with(
+        conn,
+        [
+            tool_response([("verify_patient", {
+                "full_name": row["full_name"], "dob": row["dob"], "postcode": row["postcode"],
+            })]),
+            text_response("Thank you, I've found your record."),
+        ],
+    )
+    turn = agent.say(f"Margaret Hollis, {row['dob']}, {row['postcode']}")
+
+    assert turn.reply == "Thank you, I've found your record."
+    assert turn.corrected_claim is None
+
+
+def test_saying_a_record_cannot_be_found_is_not_mistaken_for_a_claim(conn):
+    agent = agent_with(conn, [text_response("I'm sorry, I can't find a record with those details.")])
+    turn = agent.say("Nobody Real")
+    assert turn.corrected_claim is None
+
+
+def test_a_false_booking_claim_inside_a_booking_is_replaced(conn):
+    row = conn.execute("SELECT * FROM patients WHERE code = 'hollis'").fetchone()
+    agent = agent_with(conn, [])
+    agent.tools.verify_patient(row["full_name"], row["dob"], row["postcode"])
+    agent.tools.find_available_slots("NHS_EXAM", limit=3)
+
+    agent.client.responses = [text_response("That's all booked for Monday at ten past ten.")]
+    turn = agent.say("the first one")
+
+    assert not agent.tools.bookings_made
+    assert "booked" not in turn.reply.lower()
+    assert turn.corrected_claim
+
+
+def test_describing_an_existing_appointment_is_not_treated_as_a_false_booking(conn):
+    """Outside a booking flow, "your appointment is confirmed" can be true."""
+    agent = agent_with(conn, [text_response("Your appointment is confirmed for Monday at 10:20.")])
+    turn = agent.say("when is my appointment")
+    assert turn.corrected_claim is None
+
+
+def test_the_voice_connection_can_be_used_from_another_thread(tmp_path):
+    """
+    Every voice call opened the database on the event loop thread and used
+    it from worker threads, so every database tool raised ProgrammingError.
+    """
+    import threading
+    from sophia import db
+
+    connection = db.reset_database(tmp_path / "threads.db")
+    connection.close()
+    shared = db.connect(tmp_path / "threads.db", shared_across_threads=True)
+
+    outcome = {}
+
+    def use_it():
+        try:
+            outcome["n"] = shared.execute("SELECT COUNT(*) AS n FROM patients").fetchone()["n"]
+        except Exception as error:  # noqa: BLE001
+            outcome["error"] = error
+
+    worker = threading.Thread(target=use_it)
+    worker.start()
+    worker.join()
+    shared.close()
+
+    assert "error" not in outcome, outcome.get("error")
+    assert outcome["n"] > 0

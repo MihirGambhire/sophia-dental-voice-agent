@@ -104,12 +104,100 @@ def _normalise_dob(value: str) -> str | None:
     caller treats as a failed match rather than guessing.
     """
     value = (value or "").strip()
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d %B %Y", "%d %b %Y"):
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
         try:
             return datetime.strptime(value, fmt).strftime(clock.DB_DATE_FORMAT)
         except ValueError:
             continue
+
+    # Spoken forms. Deepgram rendered "twelfth of March, nineteen fifty
+    # eight" as "March 12. 1958.", with the month first and a full stop in
+    # the middle, which none of the formats above accept. Ordinals, "of"
+    # and punctuation are stripped before trying either order.
+    spoken = re.sub(r"(\d+)(st|nd|rd|th)\b", r"\1", value.lower())
+    spoken = re.sub(r"\bof\b|[.,]", " ", spoken)
+    spoken = re.sub(r"\s+", " ", spoken).strip()
+    for fmt in ("%d %B %Y", "%d %b %Y", "%B %d %Y", "%b %d %Y"):
+        try:
+            return datetime.strptime(spoken, fmt).strftime(clock.DB_DATE_FORMAT)
+        except ValueError:
+            continue
     return None
+
+
+# What a model passes when it does not actually have a value yet.
+_PLACEHOLDERS = {"", "unknown", "none", "n/a", "na", "not provided", "not given", "null", "?"}
+
+# A deliberately loose UK postcode shape, checked with spaces removed, so
+# "W A 1 2 N F" from speech to text still passes.
+_UK_POSTCODE = re.compile(r"^[A-Z]{1,2}\d[A-Z\d]?\d[A-Z]{2}$")
+
+# How alike a spoken name must be to the record once date of birth and
+# postcode already match exactly. Speech to text heard "Hollis" as
+# "Hollies", which is 0.97 alike; an unrelated name scores far lower.
+_NAME_SIMILARITY = 0.85
+
+
+def _name_similarity(said: str, recorded: str) -> float:
+    from difflib import SequenceMatcher
+
+    return SequenceMatcher(None, _normalise_name(said), _normalise_name(recorded)).ratio()
+
+
+def _edit_distance(a: str, b: str) -> int:
+    """Levenshtein distance, small inputs only."""
+    previous = list(range(len(b) + 1))
+    for i, char_a in enumerate(a, start=1):
+        current = [i]
+        for j, char_b in enumerate(b, start=1):
+            current.append(min(
+                previous[j] + 1,
+                current[j - 1] + 1,
+                previous[j - 1] + (char_a != char_b),
+            ))
+        previous = current
+    return previous[-1]
+
+
+_NUMBER_WORDS = {
+    "zero": "0", "oh": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+    "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
+}
+
+
+def _spoken_characters(utterances: list[str]) -> str:
+    """
+    Everything the caller said, reduced to the characters a postcode uses.
+
+    "W one two n f" becomes "W12NF", so a postcode read out letter by
+    letter or digit by word can be found in it.
+    """
+    words = re.findall(r"[a-z0-9]+", " ".join(utterances).lower())
+    return "".join(_NUMBER_WORDS.get(word, word) for word in words).upper()
+
+
+def _postcode_was_said(postcode: str, utterances: list[str]) -> bool:
+    """
+    True if the caller actually said this postcode, allowing one character
+    of speech to text error.
+
+    The model was caught passing a postcode the caller had never given: on
+    one run "UNKNOWN", on another "placeholder", and on a third WA1 1LZ, a
+    plausible postcode it simply made up. The last one produced "I cannot
+    find a record" for a real patient who had not reached that question
+    yet. Checking against the caller's own words catches all three.
+    """
+    target = _normalise_postcode(postcode).upper()
+    heard = _spoken_characters(utterances)
+    if not target or not heard:
+        return False
+    if target in heard:
+        return True
+    for size in (len(target) - 1, len(target), len(target) + 1):
+        for start in range(0, max(0, len(heard) - size) + 1):
+            if _edit_distance(target, heard[start:start + size]) <= 1:
+                return True
+    return False
 
 
 class SophiaTools:
@@ -128,6 +216,10 @@ class SophiaTools:
         # a short state block for the model, so it does not have to
         # rediscover by calling the same tools again every turn.
         self.verified_name: str | None = None
+        # What the caller has actually said on this call, filled in by the
+        # agent. None means the tools are being used directly, by a test or
+        # a script, where there is no caller whose words to check against.
+        self.caller_heard: list[str] | None = None
         self.offered_slots: list[dict] = []
         self.offered_urgent: list[dict] = []
         self.bookings_made: list[dict] = []
@@ -198,7 +290,39 @@ class SophiaTools:
         with no hint about which part was wrong, because telling a caller
         "the postcode is right but the date of birth is wrong" would
         confirm that the postcode belongs to a real patient.
+
+        Two problems found on live voice calls shaped the rest of this.
+
+        The model called this with only a name and date of birth, before
+        asking for the postcode, and the caller heard "I cannot find a
+        record". A missing detail is now reported as missing, naming which
+        one, which leaks nothing because it only describes what the caller
+        has not said yet.
+
+        Speech to text heard "Hollis" as "Hollies", so an exact name match
+        failed for a real patient giving correct details. Date of birth and
+        postcode must still match exactly. The name only has to be very
+        close, and only when a single record is that close. Twins share a
+        date of birth and usually a postcode, so if two records at the same
+        address are both near the spoken name, nothing is verified.
         """
+        missing = [
+            label
+            for label, value in (
+                ("full name", full_name),
+                ("date of birth", dob),
+                ("postcode", postcode),
+            )
+            if (value or "").strip().lower() in _PLACEHOLDERS
+        ]
+        if missing:
+            return {
+                "verified": False,
+                "reason": "missing_details",
+                "missing": missing,
+                "say": f"Could you tell me your {' and '.join(missing)}, please?",
+            }
+
         normalised_dob = _normalise_dob(dob)
         if normalised_dob is None:
             return {
@@ -207,26 +331,65 @@ class SophiaTools:
                 "say": "Sorry, I did not catch that date of birth. Could you give it to me again, starting with the day?",
             }
 
-        row = self.conn.execute(
+        if self.caller_heard is not None and not _postcode_was_said(postcode, self.caller_heard):
+            return {
+                "verified": False,
+                "reason": "missing_details",
+                "missing": ["postcode"],
+                "say": "Could you tell me your postcode, please?",
+            }
+
+        spoken_postcode = _normalise_postcode(postcode).upper()
+        if not _UK_POSTCODE.match(spoken_postcode):
+            return {
+                "verified": False,
+                "reason": "postcode_not_understood",
+                "say": (
+                    "Sorry, I did not catch that as a UK postcode. Could you say it "
+                    "again, letter by letter? For example, W A 1, 1 J A."
+                ),
+            }
+
+        rows = self.conn.execute(
             "SELECT * FROM patients WHERE dob = ?", (normalised_dob,)
         ).fetchall()
+        same_address = [
+            row for row in rows if _normalise_postcode(row["postcode"]).upper() == spoken_postcode
+        ]
 
-        for candidate in row:
-            name_matches = _normalise_name(candidate["full_name"]) == _normalise_name(
-                full_name
-            )
-            postcode_matches = _normalise_postcode(
-                candidate["postcode"]
-            ) == _normalise_postcode(postcode)
-            if name_matches and postcode_matches:
-                self.verified_patient_id = candidate["id"]
-                self.verified_name = candidate["full_name"]
-                return {
-                    "verified": True,
-                    "patient_id": candidate["id"],
-                    "first_name": candidate["full_name"].split()[0],
-                    "say": "Thank you, I have found your record.",
-                }
+        exact = [
+            row for row in same_address
+            if _normalise_name(row["full_name"]) == _normalise_name(full_name)
+        ]
+        close = [
+            row for row in same_address
+            if _name_similarity(full_name, row["full_name"]) >= _NAME_SIMILARITY
+        ]
+        match = exact[0] if len(exact) == 1 else (close[0] if len(close) == 1 else None)
+
+        if match is None:
+            # Speech to text heard "W A 1, 2 N F" as "W one two n f", losing
+            # one letter. Allow a single character of postcode error, but
+            # only when the date of birth is exact, the name is close, and
+            # exactly one record fits. Two fuzzy details out of three is not
+            # enough on its own terms, so the uniqueness rule stays.
+            near = [
+                row for row in rows
+                if _edit_distance(_normalise_postcode(row["postcode"]).upper(), spoken_postcode) <= 1
+                and _name_similarity(full_name, row["full_name"]) >= _NAME_SIMILARITY
+            ]
+            if len(near) == 1:
+                match = near[0]
+
+        if match is not None:
+            self.verified_patient_id = match["id"]
+            self.verified_name = match["full_name"]
+            return {
+                "verified": True,
+                "patient_id": match["id"],
+                "first_name": match["full_name"].split()[0],
+                "say": "Thank you, I have found your record.",
+            }
 
         # Deliberately identical response whether the patient does not
         # exist or the details did not line up.

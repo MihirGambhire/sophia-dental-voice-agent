@@ -20,7 +20,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from pipecat.frames.frames import Frame, TextFrame, TranscriptionFrame, TTSSpeakFrame
+from pipecat.frames.frames import (
+    Frame,
+    InterimTranscriptionFrame,
+    TextFrame,
+    TranscriptionFrame,
+    TTSSpeakFrame,
+    VADUserStartedSpeakingFrame,
+    VADUserStoppedSpeakingFrame,
+)
 from pipecat.processors.frame_processor import FrameDirection
 
 from sophia import clock
@@ -57,7 +65,8 @@ def make_processor(agent):
     test the push is replaced with a recorder.
     """
     events = []
-    processor = SophiaVoiceProcessor(agent, on_event=events.append)
+    # A near zero silence window so tests do not wait 1.2 seconds per turn.
+    processor = SophiaVoiceProcessor(agent, on_event=events.append, turn_end_silence=0.01)
 
     pushed = []
 
@@ -89,12 +98,142 @@ async def feed(processor, frame, direction=FrameDirection.DOWNSTREAM):
     parent.process_frame = noop
     try:
         await processor.process_frame(frame, direction)
+        # Turns are answered after a short silence, in a background task.
+        await processor.wait_idle()
+    finally:
+        parent.process_frame = original
+
+
+async def feed_many(processor, frames):
+    """Several frames in one event loop, as a real caller produces them."""
+    parent = SophiaVoiceProcessor.__mro__[1]
+
+    async def noop(self, frame, direction):
+        return None
+
+    original = parent.process_frame
+    parent.process_frame = noop
+    try:
+        for frame in frames:
+            await processor.process_frame(frame, FrameDirection.DOWNSTREAM)
+        await processor.wait_idle()
     finally:
         parent.process_frame = original
 
 
 def transcription(text):
     return TranscriptionFrame(text=text, user_id="caller", timestamp="now")
+
+
+# ---------------------------------------------------------------------------
+# Regressions from the first real phone tests
+# ---------------------------------------------------------------------------
+
+
+def test_a_sentence_split_by_a_pause_becomes_one_turn():
+    """
+    A real caller said "thirteenth April two thousand and", paused, then
+    the rest. Answering each fragment on arrival made Sophia accept half a
+    date of birth and move on. Fragments inside one turn are now joined.
+    """
+    agent = FakeAgent()
+    processor, _, _ = make_processor(agent)
+
+    asyncio.run(feed_many(processor, [
+        VADUserStartedSpeakingFrame(),
+        transcription("thirteenth April two thousand and"),
+        transcription("four"),
+        VADUserStoppedSpeakingFrame(),
+    ]))
+
+    assert agent.heard == ["thirteenth April two thousand and four"]
+
+
+def test_speaking_again_before_the_silence_ends_keeps_it_one_turn():
+    agent = FakeAgent()
+    processor, _, _ = make_processor(agent)
+
+    asyncio.run(feed_many(processor, [
+        transcription("Can you tell me when the"),
+        VADUserStartedSpeakingFrame(),
+        transcription("dental office is open"),
+        VADUserStoppedSpeakingFrame(),
+    ]))
+
+    assert agent.heard == ["Can you tell me when the dental office is open"]
+
+
+def test_interim_words_arriving_hold_the_turn_open():
+    agent = FakeAgent()
+    processor, _, _ = make_processor(agent)
+
+    asyncio.run(feed_many(processor, [
+        transcription("my postcode is"),
+        InterimTranscriptionFrame(text="W A", user_id="caller", timestamp="now"),
+        transcription("W A 1 2 N F"),
+    ]))
+
+    assert agent.heard == ["my postcode is W A 1 2 N F"]
+
+
+def test_turns_never_run_at_the_same_time():
+    """
+    The agent's database connection is shared across worker threads, which
+    is only safe one turn at a time. Two turns overlapping would reintroduce
+    the thread errors the first testers hit.
+    """
+    import threading
+    import time as _time
+
+    active = {"now": 0, "max": 0}
+    guard = threading.Lock()
+
+    class SlowAgent(FakeAgent):
+        def say(self, text):
+            with guard:
+                active["now"] += 1
+                active["max"] = max(active["max"], active["now"])
+            _time.sleep(0.05)
+            with guard:
+                active["now"] -= 1
+            return super().say(text)
+
+    agent = SlowAgent()
+    processor, _, _ = make_processor(agent)
+
+    async def two_turns():
+        parent = SophiaVoiceProcessor.__mro__[1]
+
+        async def noop(self, frame, direction):
+            return None
+
+        original = parent.process_frame
+        parent.process_frame = noop
+        try:
+            await processor.process_frame(transcription("first"), FrameDirection.DOWNSTREAM)
+            await asyncio.sleep(0.03)
+            await processor.process_frame(transcription("second"), FrameDirection.DOWNSTREAM)
+            await asyncio.sleep(0.03)
+            await processor.wait_idle()
+        finally:
+            parent.process_frame = original
+
+    asyncio.run(two_turns())
+
+    assert agent.heard == ["first", "second"]
+    assert active["max"] == 1
+
+
+def test_a_failure_never_shows_the_caller_a_raw_exception():
+    """The first testers saw a SQLite error message on screen."""
+    agent = FakeAgent(fails=True)
+    processor, _, events = make_processor(agent)
+
+    asyncio.run(feed(processor, transcription("hello")))
+
+    error = next(event for event in events if event["type"] == "error")
+    assert "fell over" not in error["text"]
+    assert "Error" not in error["text"]
 
 
 # ---------------------------------------------------------------------------

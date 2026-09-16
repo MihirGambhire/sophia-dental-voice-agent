@@ -193,11 +193,19 @@ function render(events) {
   window.scrollTo(0, document.body.scrollHeight);
 }
 
+// Polls overlap when a request takes longer than the interval, which it
+// does over the tunnel from a phone. Two overlapping polls both asked for
+// everything after the same position and both rendered it, so testers saw
+// the same exchange repeated seven times. Only one poll runs at a time now.
+let polling = false;
 async function poll() {
+  if (polling) return;
+  polling = true;
   try {
     const data = await (await fetch('/api/events?after=' + seen)).json();
     if (data.events.length) { render(data.events); seen = data.total; }
   } catch (e) { /* the call matters, the panel does not */ }
+  finally { polling = false; }
 }
 
 // Runs on the audio thread. Converts whatever rate the device records at

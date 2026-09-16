@@ -37,11 +37,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
+from loguru import logger
 from pipecat.frames.frames import (
     EndFrame,
     Frame,
+    InterimTranscriptionFrame,
     TranscriptionFrame,
     TTSSpeakFrame,
+    VADUserStartedSpeakingFrame,
+    VADUserStoppedSpeakingFrame,
 )
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -63,56 +67,145 @@ from . import config, db, prompts, web_audio
 from .agent_text import SophiaAgent
 
 
+# How long the caller must be silent before their turn is treated as over.
+#
+# The first version answered every transcript fragment the moment it
+# arrived. Speech to text finalises on short pauses, so a real caller
+# saying "thirteenth April two thousand and... four" produced two turns,
+# and Sophia accepted the half date and moved on to asking for the
+# postcode. "Can you tell me when the" got its own reply before the rest of
+# the sentence arrived. People pause mid sentence, especially over dates
+# and postcodes, so this errs long.
+TURN_END_SILENCE_SECS = 1.2
+
+FAILURE_REPLY = (
+    "I am very sorry, something has gone wrong at my end. "
+    f"Please ring the practice directly on {config.PRACTICE_PHONE}."
+)
+
+
 class SophiaVoiceProcessor(FrameProcessor):
     """
-    The only new logic in the voice layer: speech in, speech out.
+    Speech in, speech out, one complete caller turn at a time.
 
-    Everything else is delegated to the agent that already exists.
+    Everything Sophia decides is delegated to the agent that already
+    exists. This class only decides when the caller has finished speaking,
+    and makes sure turns reach the agent strictly one after another.
     """
 
-    def __init__(self, agent: SophiaAgent, on_event: Callable[[dict], None] | None = None):
+    def __init__(
+        self,
+        agent: SophiaAgent,
+        on_event: Callable[[dict], None] | None = None,
+        turn_end_silence: float = TURN_END_SILENCE_SECS,
+    ):
         super().__init__()
         self.agent = agent
         self.on_event = on_event or (lambda event: None)
+        self.turn_end_silence = turn_end_silence
+
+        self._pending: list[str] = []
+        self._caller_speaking = False
+        self._flush_task: asyncio.Task | None = None
+        self._turn_tasks: set[asyncio.Task] = set()
+        # One turn at a time. The agent's database connection is shared
+        # across worker threads, which is only safe if turns never overlap.
+        self._turn_lock = asyncio.Lock()
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
 
-        if not isinstance(frame, TranscriptionFrame) or not (frame.text or "").strip():
-            await self.push_frame(frame, direction)
+        if isinstance(frame, VADUserStartedSpeakingFrame):
+            # Still talking: whatever was heard so far is not a full turn.
+            self._caller_speaking = True
+            self._cancel_flush()
+        elif isinstance(frame, VADUserStoppedSpeakingFrame):
+            self._caller_speaking = False
+            if self._pending:
+                self._schedule_flush()
+        elif isinstance(frame, InterimTranscriptionFrame):
+            # Words are still arriving, which is the same signal.
+            self._cancel_flush()
+        elif isinstance(frame, TranscriptionFrame):
+            text = (frame.text or "").strip()
+            if text:
+                self._pending.append(text)
+                if not self._caller_speaking:
+                    self._schedule_flush()
+                return
+
+        await self.push_frame(frame, direction)
+
+    # -- deciding when the caller has finished ----------------------------
+
+    def _cancel_flush(self) -> None:
+        if self._flush_task and not self._flush_task.done():
+            self._flush_task.cancel()
+        self._flush_task = None
+
+    def _schedule_flush(self) -> None:
+        self._cancel_flush()
+        self._flush_task = asyncio.create_task(self._flush_after_silence())
+
+    async def _flush_after_silence(self) -> None:
+        await asyncio.sleep(self.turn_end_silence)
+        if not self._pending:
             return
+        said = " ".join(self._pending)
+        self._pending.clear()
+        # Detached from the flush task, so a caller who starts speaking
+        # again cannot cancel a turn that is already being answered.
+        task = asyncio.create_task(self._respond(said))
+        self._turn_tasks.add(task)
+        task.add_done_callback(self._turn_tasks.discard)
 
-        said = frame.text.strip()
-        self.on_event({"type": "caller", "text": said})
+    # -- answering --------------------------------------------------------
 
-        # agent.say does blocking network calls. Running it on the event
-        # loop would stall audio for every other participant in the
-        # pipeline, including the cancellation of playback when the caller
-        # interrupts, so it goes to a worker thread.
-        try:
-            turn = await asyncio.to_thread(self.agent.say, said)
-        except Exception as failure:  # noqa: BLE001
-            self.on_event({"type": "error", "text": str(failure)})
-            await self.push_frame(
-                TTSSpeakFrame(
-                    "I am very sorry, something has gone wrong at my end. "
-                    "Please ring the practice directly on "
-                    f"{config.PRACTICE_PHONE}."
+    async def _respond(self, said: str) -> None:
+        async with self._turn_lock:
+            self.on_event({"type": "caller", "text": said})
+
+            # agent.say makes blocking network calls. On the event loop it
+            # would stall the audio, so it runs in a worker thread.
+            try:
+                turn = await asyncio.to_thread(self.agent.say, said)
+            except Exception:  # noqa: BLE001
+                # Logged in full for whoever reads the server output. The
+                # caller gets a sentence, never an exception message: a raw
+                # SQLite error was shown on screen to the first testers.
+                logger.exception("Sophia failed to answer a caller turn")
+                self.on_event(
+                    {"type": "error", "text": "Something went wrong on our side."}
                 )
+                await self.push_frame(TTSSpeakFrame(FAILURE_REPLY))
+                return
+
+            self.on_event(
+                {
+                    "type": "sophia",
+                    "text": turn.reply,
+                    "tools": turn.tools_used,
+                    "safety": turn.safety_level,
+                    "seconds": round(turn.latency_seconds, 2),
+                }
             )
-            return
+            await self.push_frame(TTSSpeakFrame(turn.reply))
 
-        self.on_event(
-            {
-                "type": "sophia",
-                "text": turn.reply,
-                "tools": turn.tools_used,
-                "safety": turn.safety_level,
-                "seconds": round(turn.latency_seconds, 2),
-            }
-        )
+    async def wait_idle(self) -> None:
+        """Wait for any pending or running turn. Used by the tests."""
+        if self._flush_task:
+            try:
+                await self._flush_task
+            except asyncio.CancelledError:
+                pass
+        while self._turn_tasks:
+            await asyncio.gather(*list(self._turn_tasks), return_exceptions=True)
 
-        await self.push_frame(TTSSpeakFrame(turn.reply))
+    async def cleanup(self) -> None:
+        self._cancel_flush()
+        for task in list(self._turn_tasks):
+            task.cancel()
+        await super().cleanup()
 
 
 def build_pipeline(
@@ -130,7 +223,9 @@ def build_pipeline(
     A fresh database connection and a fresh agent per call, so verification
     state can never leak from one caller to the next.
     """
-    conn = db.connect()
+    # Opened here on the event loop thread, used from worker threads by
+    # agent.say. SophiaVoiceProcessor's lock keeps it to one turn at a time.
+    conn = db.connect(shared_across_threads=True)
     agent = SophiaAgent(conn)
 
     stt = DeepgramSTTService(

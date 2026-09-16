@@ -14,6 +14,7 @@ something to say.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -54,6 +55,27 @@ TEXT_REPLACEMENTS = {
 }
 
 
+# Positive claims only. "I can't find your record" must not match, and
+# neither must describing an appointment the patient already had, which is
+# why "you're booked in for Monday" is deliberately absent from the booking
+# pattern: that is how Sophia describes an existing appointment.
+_CLAIMS_VERIFIED = re.compile(
+    r"\b("
+    r"i'?ve (now )?(got you |)verified|i have (now )?(got you )?verified|"
+    r"you(?:'re| are) (now )?verified|verified you|"
+    r"(found|located|pulled up) your (record|details|file)|"
+    r"confirmed your (identity|details)"
+    r")"
+)
+_CLAIMS_BOOKED = re.compile(
+    r"\b("
+    r"i'?ve booked|i have booked|booked you in|"
+    r"that'?s (all )?booked|that is (all )?booked|all booked|"
+    r"your appointment is (now )?(booked|confirmed)"
+    r")"
+)
+
+
 def plain_text(value: str) -> str:
     """
     Normalise anything Sophia is about to say.
@@ -80,6 +102,9 @@ class TurnRecord:
     latency_seconds: float = 0.0
     safety_level: str = safety.Level.ROUTINE.value
     escalated_without_model: bool = False
+    # What the model tried to say, when it claimed something untrue and
+    # was corrected before the caller heard it. Kept for the eval suite.
+    corrected_claim: str | None = None
 
     @property
     def tools_used(self) -> list[str]:
@@ -105,6 +130,9 @@ class SophiaAgent:
     def __init__(self, conn, now: datetime | None = None, client=None):
         self.conn = conn
         self.tools = SophiaTools(conn, now=now)
+        # Lets the tools check identifiers against what the caller really
+        # said, rather than trusting the model's arguments.
+        self.tools.caller_heard = []
         self.now = now or clock.now()
         self.client = client or self._build_client()
         self.history: list[TurnRecord] = []
@@ -265,6 +293,7 @@ class SophiaAgent:
         # gets the 999 instruction from deterministic code, without
         # waiting on a model to decide, and without any chance of it
         # deciding otherwise.
+        self.tools.caller_heard.append(text)
         screening = safety.screen(text)
         if screening.level is not safety.Level.ROUTINE:
             self.last_screening = screening
@@ -336,7 +365,51 @@ class SophiaAgent:
             )
             self.messages.append({"role": "assistant", "content": record.reply})
 
+        corrected = self._correct_false_claims(record.reply)
+        if corrected is not None:
+            record.corrected_claim = record.reply
+            record.reply = corrected
+            self.messages[-1] = {"role": "assistant", "content": corrected}
+
         record.latency_seconds = (clock.now() - started).total_seconds()
         self.history.append(record)
         self._compact_history()
         return record
+
+    def _correct_false_claims(self, reply: str) -> str | None:
+        """
+        Replace a reply that claims something the call state says did not happen.
+
+        Two real failures prompted this. Earlier, Sophia told a caller
+        "I have booked you in" when nothing had been written. Later, on a
+        live voice call, she said "I've got you verified now" when no
+        identity check had run at all, for details that matched no
+        patient. Both times the system prompt already forbade exactly
+        that, in capitals.
+
+        The tools were never at risk: nothing is revealed or changed
+        without a real verification, because that is enforced in Python.
+        But a caller told they are verified, or booked, believes it. So
+        the claim itself is checked against the call state here, and a
+        false one never reaches the caller. Returns the replacement, or
+        None when the reply is consistent with what actually happened.
+        """
+        text = (reply or "").lower()
+
+        if self.tools.verified_patient_id is None and _CLAIMS_VERIFIED.search(text):
+            return (
+                "I haven't been able to confirm your details yet. Could you give me "
+                "your full name, your date of birth, and your postcode, one at a time?"
+            )
+
+        # Only inside a booking conversation, meaning times have been
+        # offered. Outside one, "your appointment is confirmed for Monday"
+        # is Sophia truthfully describing a booking the patient already had.
+        in_booking_flow = bool(self.tools.offered_slots or self.tools.offered_urgent)
+        if in_booking_flow and not self.tools.bookings_made and _CLAIMS_BOOKED.search(text):
+            return (
+                "Before I confirm anything, I need to make that booking properly. "
+                "Which of the times I offered would you like?"
+            )
+
+        return None

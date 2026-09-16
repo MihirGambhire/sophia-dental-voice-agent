@@ -157,16 +157,28 @@ CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminder_queue (due_at, status);
 # ---------------------------------------------------------------------------
 
 
-def connect(db_path: Path | str | None = None) -> sqlite3.Connection:
+def connect(
+    db_path: Path | str | None = None, *, shared_across_threads: bool = False
+) -> sqlite3.Connection:
     """
     Open a connection with sensible defaults.
 
     Rows come back as sqlite3.Row so callers can use column names, and
     foreign keys are enforced, which SQLite does not do by default.
+
+    shared_across_threads exists because of a bug that broke every voice
+    call. The voice layer opens the connection on the event loop thread,
+    then runs each of Sophia's turns in a worker thread so blocking model
+    calls do not stall the audio. SQLite refuses to use a connection from
+    a thread other than the one that created it, so every tool that
+    touched the database raised ProgrammingError: no identity check, no
+    appointment lookup, no booking. Turning the check off is only safe
+    because the caller guarantees one turn at a time on the connection,
+    which the voice processor does with a lock.
     """
     path = Path(db_path) if db_path else config.DB_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, check_same_thread=not shared_across_threads)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn

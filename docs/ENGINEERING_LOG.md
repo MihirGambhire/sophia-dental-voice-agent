@@ -562,6 +562,68 @@ the page never failed.
 
 ---
 
+### 23. The first real phone tests: seven bugs in one transcript
+
+Friends tested the shared link on their phones. One transcript showed a
+raw SQLite error on screen, Sophia answering half sentences, the same
+exchange repeated seven times, and Sophia telling a caller "I've got you
+verified now" for details that matched nobody. Each was traced separately.
+
+**1. No database tool had ever worked in a voice call.** The connection
+was opened on the event loop thread and used from the worker thread that
+runs each turn, which SQLite refuses. Reproduced four out of four times.
+My previous public link test had asked about opening hours, the one
+question that never touches the database, which is why it passed. Fixed
+with a connection shared across threads, made safe by a lock that allows
+one turn at a time.
+
+**2. Every fragment of speech got its own reply.** Speech to text
+finalises on short pauses, so "thirteenth April two thousand and" was
+answered before the year arrived, and Sophia accepted half a date of
+birth. Turns are now joined until the caller has been silent for 1.2
+seconds, and voice activity or interim words hold the turn open.
+
+**3. She claimed a verification that never happened.** The prompt already
+forbade it. Her reply is now checked against the call state, and a claim
+of verification or of a booking that the state contradicts is replaced
+before the caller hears it.
+
+**4. The transcript repeated itself.** The page polled every 0.7 seconds
+and a request over the tunnel from a phone takes longer, so overlapping
+polls rendered the same lines twice. The server's own record had no
+duplicates. One poll at a time now.
+
+**5. The caller saw the exception, and the logs did not.** Failures now go
+to the server log in full and the caller gets a sentence.
+
+**6. Calls dropped after about a minute.** At the exact second a call
+died, the tunnel logged "failed to accept QUIC stream: timeout". The
+tunnel reaches Cloudflare over QUIC, which is UDP, which this network
+blocks, and each drop of that link killed every call on it. Running the
+tunnel with `--protocol http2` over TCP fixed it; the next two minute test
+call held throughout.
+
+**7. The model invented a postcode.** Captured directly, three runs
+before the caller had given one, the model passed "UNKNOWN", then
+"placeholder", then WA1 1LZ, a plausible postcode it made up, and the
+caller was told no record existed. The tool now refuses a postcode the
+caller never actually said, checked against the caller's own words with
+one character of tolerance, because speech to text also heard "W A 1,
+2 N F" as "W one two n f". Separately it heard "Hollis" as "Hollies", so
+the name now only has to be very close, and only when exactly one record
+fits: twins share a date of birth and an address.
+
+**Verified end to end over the public link**, with synthesised speech as
+the microphone: the misheard surname, the invented postcode, and the
+dropped letter all occurred, and the booking was still written to the
+database at the correct NHS fee.
+
+**Lesson.** The earlier test chose a question that avoided the broken
+layer. A test is only as good as the path it exercises, so the end to end
+test now completes a booking, which touches every layer at once.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns
