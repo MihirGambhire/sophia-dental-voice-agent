@@ -189,12 +189,13 @@ class SpeechSettings:
     # voice. An American receptionist answering a Warrington dental
     # practice is the kind of detail that undoes everything else.
     #
-    # Deepgram lists four British voices. pandora is the newer aura-2
-    # generation and reads calm and smooth, which suits someone who has to
-    # talk to people in pain. aura-athena-en is the alternative, a little
-    # more formal.
+    # Deepgram lists four British voices. athena is the one chosen after
+    # actually listening to them: Deepgram describes it as smooth, calm
+    # and professional, which is what a receptionist sounds like. pandora
+    # is the newer aura-2 generation but reads breathier, which is wrong
+    # for someone taking a medical booking.
     tts_voice: str = field(
-        default_factory=lambda: _env("DEEPGRAM_TTS_VOICE", "aura-2-pandora-en")
+        default_factory=lambda: _env("DEEPGRAM_TTS_VOICE", "aura-athena-en")
     )
 
 
