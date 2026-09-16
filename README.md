@@ -281,6 +281,9 @@ transcript, kept by a random id in their browser, so people can test at
 the same time without taking each other's slots. **Reset my demo data** on
 the page puts theirs back as it started.
 
+[`docs/TESTING.md`](docs/TESTING.md) is a guide for testers: which fake
+patient to use for each flow, what to say, and what a correct answer is.
+
 **Check the setup.**
 
 ```bash
