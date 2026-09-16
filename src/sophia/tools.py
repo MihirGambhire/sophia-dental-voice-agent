@@ -26,7 +26,7 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
-from . import clock, config, policies
+from . import clock, config, knowledge, policies
 from .policies import PatientFacts
 
 # Availability is searched on this grid. Ten minutes keeps the number of
@@ -842,6 +842,20 @@ class SophiaTools:
         }
 
     # -- 7. practice facts that are structured, not prose -----------------
+
+    def search_practice_info(self, question: str) -> dict:
+        """
+        Look something up in the practice's own documents.
+
+        Opening hours, the lunch closure, where the practice is, how to
+        register, what the attendance policy says, the out of hours
+        numbers. Anything a receptionist would know and a caller might
+        ask.
+
+        Returns nothing rather than a weak match when the question is not
+        covered, so that not knowing stays a possible outcome.
+        """
+        return knowledge.answer(question)
 
     def get_fee(self, appointment_type: str) -> dict:
         """Look up a fee from the price table. Never from memory."""

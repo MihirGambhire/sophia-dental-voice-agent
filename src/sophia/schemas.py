@@ -131,6 +131,14 @@ TOOL_SCHEMAS: list[dict] = [
         ["appointment_id", "new_slot_ref", "caller_confirmed"],
     ),
     _tool(
+        "search_practice_info",
+        "Practice facts: opening hours, lunch closure, address, parking, registering, "
+        "NHS availability, policies, out of hours numbers. Use it for ANY question "
+        "about the practice. Never answer these from memory.",
+        {"question": {"type": "string", "description": "the caller's question"}},
+        ["question"],
+    ),
+    _tool(
         "get_fee",
         "Look up a price by appointment type code. Never quote from memory.",
         {"appointment_type": _STRING},

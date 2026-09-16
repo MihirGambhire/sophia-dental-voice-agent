@@ -168,6 +168,7 @@ src/sophia/
   config.py         Every business constant and model name in one place
   clock.py          Opening hours, the 8am urgent release, spoken UK dates, BST handling
   db.py             SQLite schema and the seeder
+  knowledge.py      Retrieval over the practice documents
   policies.py       The business rules, as pure tested functions
   tools.py          What the model may call, and everything it may not
   schemas.py        Tool definitions sent to the model
@@ -177,7 +178,7 @@ scripts/
   init_db.py        Rebuild the demo database from scratch
   chat.py           Talk to Sophia in the terminal
 tests/              205 tests: schema, time, policy, tools, conversation loop
-docs/               Architecture diagram
+docs/               Architecture diagram and the engineering log
 ```
 
 ---
@@ -244,6 +245,30 @@ clinician does not work.
 
 **Times are stored as local wall clock.** The reasoning, and why that is
 safe here, is written out at the top of `src/sophia/clock.py`.
+
+---
+
+## Engineering log
+
+[`docs/ENGINEERING_LOG.md`](docs/ENGINEERING_LOG.md) records every bug found
+during the build: what the symptom looked like, what the cause turned out
+to be, and what changed. It is kept because the causes were rarely where
+the symptoms pointed.
+
+A representative one. Sophia was asked for the opening hours and answered
+nine to six with Saturday mornings. The real hours are eight to six,
+weekdays only, closed one to two. She called no tool at all. The system
+prompt already said, in capitals, that she knows nothing a tool has not
+told her, and that was never going to be enough, because no tool could
+answer the question. You cannot instruct a model out of a capability gap.
+"Never guess" only becomes a behaviour when there is somewhere to look and
+permission to come back empty.
+
+Others include a British Summer Time bug that would have misjudged
+cancellations every October, a model listed in the provider's own
+documentation that no longer exists, a confirmed booking that was never
+written to the database, and a token saving optimisation that made the
+system slower by deleting information it depended on.
 
 ---
 

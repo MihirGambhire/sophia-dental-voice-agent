@@ -100,10 +100,16 @@ def test_tool_names_are_unique():
 
 def test_the_tool_surface_stays_small():
     """
-    CLAUDE.md budgets about nine tools. The schemas are resent on every
-    turn, so this is a free tier and latency constraint, not tidiness.
+    CLAUDE.md budgets about nine tools, and the schemas are resent on
+    every turn, so this is a free tier and latency constraint rather than
+    tidiness. Thirteen is the agreed ceiling: the twelve original tools
+    plus search_practice_info, which was added after Sophia invented the
+    opening hours because she had nothing to look them up in.
+
+    The real budget is enforced by the token test below. This one just
+    stops the list growing without anyone noticing.
     """
-    assert len(TOOL_SCHEMAS) <= 12
+    assert len(TOOL_SCHEMAS) <= 13
 
 
 def test_every_tool_has_a_description():
