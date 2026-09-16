@@ -114,7 +114,6 @@
   </footer>
 </div>
 
-<audio id="audio" autoplay></audio>
 
 <script>
 const callBtn = document.getElementById('call');
@@ -124,9 +123,15 @@ const dotEl = document.getElementById('dot');
 const errEl = document.getElementById('error');
 const setupEl = document.getElementById('setup');
 const transcriptEl = document.getElementById('transcript');
-const audioEl = document.getElementById('audio');
 
-let pc = null, poller = null, seen = 0, iceServers = null;
+// The call is one WebSocket carrying raw 16 kHz PCM both ways, over the
+// same HTTPS connection that delivered this page. An earlier version used
+// WebRTC, which connects peer to peer and failed for anyone not on the
+// machine running the server. If you could load this page, this connects.
+const RATE = 16000;
+let ws = null, ctx = null, micStream = null, micNode = null, poller = null, seen = 0;
+let playHead = 0;              // when the next chunk of Sophia's voice starts
+let playing = [];              // queued sources, so a clear can stop them
 
 function setState(text, cls) {
   stateEl.textContent = text;
@@ -138,27 +143,12 @@ function showError(message) {
   errEl.hidden = !message;
 }
 
-// Both ends must agree on how to connect, so the page asks the server
-// rather than keeping its own copy. Without a TURN relay here, a call
-// from any machine other than the one running the server fails in ICE
-// checking and looks like an instant hang up.
-fetch('/api/ice').then(r => r.json()).then(cfg => { iceServers = cfg.iceServers; })
-  .catch(() => { iceServers = [{ urls: 'stun:stun.l.google.com:19302' }]; });
-
 fetch('/api/health').then(r => r.json()).then(info => {
   setupEl.innerHTML = 'Model: <code>' + info.model + '</code> via <code>' +
     info.provider + '</code> &nbsp; Voice: <code>' + info.voice + '</code>';
   if (!info.speech_configured) {
     showError('No Deepgram key configured, so the call cannot start.');
     callBtn.disabled = true;
-  }
-  if (!info.turn_configured && location.hostname !== 'localhost'
-      && location.hostname !== '127.0.0.1') {
-    // Being honest up front beats letting someone click Start call and
-    // watch it fail with nothing to go on.
-    showError('Heads up: no TURN relay is configured on this server, so the ' +
-              'call may not connect from your network. If it fails, that is ' +
-              'why, and it is not something you can fix at your end.');
   }
 }).catch(() => {});
 
@@ -210,14 +200,73 @@ async function poll() {
   } catch (e) { /* the call matters, the panel does not */ }
 }
 
+// Runs on the audio thread. Converts whatever rate the device records at
+// into 16 kHz signed 16 bit PCM, in 20 ms chunks. Resampling here rather
+// than forcing an AudioContext sample rate, because not every browser
+// honours that request for microphone input.
+const CAPTURE_WORKLET = `
+class Capture extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.step = sampleRate / ${RATE};
+    this.t = 0;
+    this.out = new Int16Array(${RATE / 50});
+    this.n = 0;
+  }
+  process(inputs) {
+    const x = inputs[0] && inputs[0][0];
+    if (!x) return true;
+    while (this.t < x.length) {
+      const i = Math.floor(this.t), f = this.t - i;
+      const a = x[i], b = i + 1 < x.length ? x[i + 1] : x[i];
+      const s = Math.max(-1, Math.min(1, a + (b - a) * f));
+      this.out[this.n++] = s < 0 ? s * 32768 : s * 32767;
+      if (this.n === this.out.length) {
+        this.port.postMessage(this.out.slice().buffer, []);
+        this.n = 0;
+      }
+      this.t += this.step;
+    }
+    this.t -= x.length;
+    return true;
+  }
+}
+registerProcessor('capture', Capture);
+`;
+
+function playChunk(arrayBuffer) {
+  const pcm = new Int16Array(arrayBuffer);
+  if (!pcm.length || !ctx) return;
+  const buffer = ctx.createBuffer(1, pcm.length, RATE);
+  const channel = buffer.getChannelData(0);
+  for (let i = 0; i < pcm.length; i++) channel[i] = pcm[i] / 32768;
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(ctx.destination);
+  // Chunks arrive paced in real time. Scheduling each one exactly where
+  // the last ended avoids clicks, and a small lead absorbs network jitter.
+  playHead = Math.max(playHead, ctx.currentTime + 0.08);
+  source.start(playHead);
+  playHead += buffer.duration;
+  playing.push(source);
+  source.onended = () => { playing = playing.filter(s => s !== source); };
+}
+
+function stopPlayback() {
+  playing.forEach(s => { try { s.stop(); } catch (e) {} });
+  playing = [];
+  playHead = ctx ? ctx.currentTime : 0;
+}
+
 callBtn.onclick = async () => {
   showError('');
   callBtn.disabled = true;
   setState('Asking for the microphone', 'connecting');
 
-  let stream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    });
   } catch (e) {
     showError('Microphone permission is needed to make a call.');
     setState('Not connected');
@@ -225,92 +274,61 @@ callBtn.onclick = async () => {
     return;
   }
 
+  let connected = false;
   try {
     setState('Connecting', 'connecting');
     transcriptEl.innerHTML = '<div class="empty">Connecting...</div>';
     seen = 0;
 
-    // Fetch the relay settings now if they have not arrived yet. On mobile
-    // data a quick tap on Start call can beat the background request, and
-    // a call that starts without them has no relay and cannot connect
-    // from another network.
-    if (!iceServers) {
-      try { iceServers = (await (await fetch('/api/ice')).json()).iceServers; }
-      catch (e) { iceServers = null; }
-    }
+    // Created inside the click, because browsers only allow audio to
+    // start in response to a user gesture.
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    await ctx.resume();
+    const workletUrl = URL.createObjectURL(new Blob([CAPTURE_WORKLET], { type: 'application/javascript' }));
+    await ctx.audioWorklet.addModule(workletUrl);
 
-    pc = new RTCPeerConnection({
-      iceServers: iceServers || [{ urls: 'stun:stun.l.google.com:19302' }],
-      iceCandidatePoolSize: 4
-    });
-    let sawRelay = false;
-    pc.addEventListener('icecandidate', e => {
-      if (e.candidate && e.candidate.candidate.includes(' typ relay')) sawRelay = true;
-    });
-    stream.getTracks().forEach(track => pc.addTrack(track, stream));
-    pc.addTransceiver('audio', { direction: 'recvonly' });
-    pc.ontrack = event => { audioEl.srcObject = event.streams[0]; };
+    const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${scheme}://${location.host}/ws`);
+    ws.binaryType = 'arraybuffer';
 
-    let everConnected = false;
-    pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'connected') {
-        everConnected = true;
-        setState('On the call', 'live');
-        hangBtn.disabled = false;
-      } else if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) {
-        // Never connecting at all is a different problem from a call that
-        // started and then ended, and saying "Call ended" for both sent
-        // the first testers looking in the wrong place entirely.
-        if (!everConnected) {
-          showError('Could not establish the audio connection. This is usually a ' +
-                    'firewall or network restriction. Try a different network, ' +
-                    'or a phone on mobile data.');
-          cleanup('Could not connect');
-        } else {
-          cleanup('Call ended');
-        }
-      }
+    ws.onopen = () => {
+      connected = true;
+      setState('On the call', 'live');
+      hangBtn.disabled = false;
+      poller = setInterval(poll, 700);
+
+      const source = ctx.createMediaStreamSource(micStream);
+      micNode = new AudioWorkletNode(ctx, 'capture');
+      micNode.port.onmessage = event => {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        // Do not send the microphone while Sophia is talking. On a phone
+        // speaker she would otherwise hear herself, transcribe it, and
+        // answer her own sentence. The cost is that she cannot be talked
+        // over yet, which is the next thing to improve.
+        if (ctx.currentTime < playHead + 0.25) return;
+        ws.send(event.data);
+      };
+      source.connect(micNode);
     };
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    // There is no trickle ICE here: every candidate has to be in the offer.
-    // The old 2.5 second cap could send the offer before the relay address
-    // arrived, which on mobile data meant a call with no route. Now: send
-    // as soon as gathering completes, or shortly after the first relay
-    // candidate, and never wait longer than 10 seconds.
-    setState('Finding a route', 'connecting');
-    await new Promise(resolve => {
-      if (pc.iceGatheringState === 'complete') return resolve();
-      let done = false;
-      const finish = () => { if (!done) { done = true; resolve(); } };
-      pc.addEventListener('icegatheringstatechange', () => {
-        if (pc.iceGatheringState === 'complete') finish();
-      });
-      const started = Date.now();
-      const check = setInterval(() => {
-        if (done) return clearInterval(check);
-        if (sawRelay && Date.now() - started > 1500) { clearInterval(check); finish(); }
-        if (Date.now() - started > 10000) { clearInterval(check); finish(); }
-      }, 200);
-    });
-    setState('Connecting', 'connecting');
+    ws.onmessage = event => {
+      if (event.data instanceof ArrayBuffer) return playChunk(event.data);
+      try {
+        const message = JSON.parse(event.data);
+        if (message.type === 'clear') stopPlayback();
+        if (message.type === 'error') showError(message.text);
+      } catch (e) {}
+    };
 
-    const response = await fetch('/api/offer', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sdp: pc.localDescription.sdp,
-        type: pc.localDescription.type
-      })
-    });
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      throw new Error(body.error || ('Server returned ' + response.status));
-    }
-    await pc.setRemoteDescription(await response.json());
-
-    poller = setInterval(poll, 700);
+    ws.onerror = () => {};
+    ws.onclose = () => {
+      if (!connected) {
+        showError('Could not reach the call server. Check your connection and try again.');
+        cleanup('Could not connect');
+      } else {
+        cleanup('Call ended');
+      }
+    };
   } catch (e) {
     showError(e.message);
     cleanup('Not connected');
@@ -318,12 +336,13 @@ callBtn.onclick = async () => {
 };
 
 function cleanup(message) {
-  if (poller) { clearInterval(poller); poller = null; }
-  if (pc) { pc.close(); pc = null; }
-  if (audioEl.srcObject) {
-    audioEl.srcObject.getTracks().forEach(t => t.stop());
-    audioEl.srcObject = null;
-  }
+  if (poller) { poll(); clearInterval(poller); poller = null; }
+  const socket = ws; ws = null;
+  if (socket && socket.readyState <= WebSocket.OPEN) socket.close();
+  if (micNode) { micNode.port.onmessage = null; micNode.disconnect(); micNode = null; }
+  if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+  stopPlayback();
+  if (ctx) { ctx.close(); ctx = null; }
   setState(message || 'Not connected');
   callBtn.disabled = false;
   hangBtn.disabled = true;

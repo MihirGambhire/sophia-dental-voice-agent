@@ -520,6 +520,48 @@ network.
 
 ---
 
+### 22. Three fixes to WebRTC, and the right answer was to stop using it
+
+**Symptom.** After adding a relay, a phone on mobile data still could not
+connect, and the fix after that did not help either.
+
+**What each round found.** First, the office network blocks outbound UDP
+on ports 80 and 443, and the server's WebRTC library only ever tries the
+first relay address, which Metered list as UDP. Probed directly, UDP timed
+out at exactly five seconds and TCP connected in 0.1 seconds. Fixed the
+ordering. Second, the page only waited 2.5 seconds for relay addresses
+before sending its offer. Fixed. Third, the logs from the next phone
+attempt showed the server's relay refusing to bind a channel to the
+phone, a Jio mobile IPv6 address, with 401 Unauthorized, inside a
+library with limited relay support.
+
+**The step back.** Every fix could only be tested from the machine running
+the server, which was the one case that already worked. Meanwhile the web
+page itself had reached every caller, every time, over HTTPS through the
+tunnel. The failing part was the only part taking a different road.
+
+**Fix.** Carry the call audio over a WebSocket on that same road. Raw
+16 kHz PCM both ways, a serializer of about thirty lines, and an audio
+worklet in the page that resamples the microphone. No direct path, no
+relay, no ICE. If the page loads, the call connects.
+
+**Verified from outside the server, not just beside it.** Through the
+public tunnel: the WebSocket opened in one second, Sophia's greeting began
+arriving after 3.6 seconds, and a synthesised spoken question, sent as
+microphone audio, was transcribed word for word and answered correctly
+using search_practice_info.
+
+**The cost.** Slightly more latency than peer to peer, and TCP retransmits
+lost packets rather than skipping them. The microphone is also muted while
+Sophia speaks, so a phone speaker cannot feed her own voice back to her,
+which means she cannot be interrupted yet.
+
+**Lesson.** When three careful fixes to one layer have not worked, check
+whether that layer needs to exist. The evidence was there from the start:
+the page never failed.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns

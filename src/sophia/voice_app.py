@@ -28,9 +28,10 @@ No phone number anywhere, which is what keeps this free.
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Callable
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -44,7 +45,7 @@ from pipecat.frames.frames import (
 )
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
-from pipecat.pipeline.task import PipelineTask
+from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.deepgram.stt import DeepgramSTTService, DeepgramSTTSettings
@@ -53,8 +54,12 @@ from pipecat.transports.base_transport import TransportParams
 from aiortc import RTCIceServer
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
+from pipecat.transports.websocket.fastapi import (
+    FastAPIWebsocketParams,
+    FastAPIWebsocketTransport,
+)
 
-from . import config, db, prompts
+from . import config, db, prompts, web_audio
 from .agent_text import SophiaAgent
 
 
@@ -111,22 +116,22 @@ class SophiaVoiceProcessor(FrameProcessor):
 
 
 def build_pipeline(
-    connection: SmallWebRTCConnection,
+    transport,
     on_event: Callable[[dict], None] | None = None,
+    sample_rate: int | None = None,
 ) -> tuple[PipelineTask, SophiaAgent]:
     """
-    Assemble one call.
+    Assemble one call around whichever transport carries the audio.
+
+    The pipeline is identical for WebRTC and for the WebSocket transport.
+    Only the pipe the audio travels down differs, which is the same
+    separation that kept every rule out of this file in the first place.
 
     A fresh database connection and a fresh agent per call, so verification
     state can never leak from one caller to the next.
     """
     conn = db.connect()
     agent = SophiaAgent(conn)
-
-    transport = SmallWebRTCTransport(
-        webrtc_connection=connection,
-        params=TransportParams(audio_in_enabled=True, audio_out_enabled=True),
-    )
 
     stt = DeepgramSTTService(
         api_key=config.SPEECH.deepgram_api_key,
@@ -160,7 +165,12 @@ def build_pipeline(
         ]
     )
 
-    task = PipelineTask(pipeline)
+    params = (
+        PipelineParams(audio_in_sample_rate=sample_rate, audio_out_sample_rate=sample_rate)
+        if sample_rate
+        else None
+    )
+    task = PipelineTask(pipeline, params=params)
 
     @transport.event_handler("on_client_connected")
     async def _greet(_transport, _client):
@@ -314,7 +324,11 @@ def create_app() -> FastAPI:
         def record(event: dict) -> None:
             app.state.events.append(event)
 
-        task, _agent = build_pipeline(connection, on_event=record)
+        transport = SmallWebRTCTransport(
+            webrtc_connection=connection,
+            params=TransportParams(audio_in_enabled=True, audio_out_enabled=True),
+        )
+        task, _agent = build_pipeline(transport, on_event=record)
 
         # The call runs for as long as the browser stays connected. It is
         # deliberately not awaited here, because this request has to return
@@ -322,6 +336,52 @@ def create_app() -> FastAPI:
         asyncio.create_task(PipelineRunner(handle_sigint=False).run(task))
 
         return connection.get_answer()
+
+    @app.websocket("/ws")
+    async def call_over_websocket(websocket: WebSocket):
+        """
+        A call carried entirely over one WebSocket.
+
+        This is the path the page uses. It rides the same HTTPS connection
+        that already delivered the page, so if the caller could load the
+        site, the call connects. See web_audio.py for why this replaced
+        WebRTC as the default.
+        """
+        await websocket.accept()
+
+        if not config.SPEECH.deepgram_api_key:
+            await websocket.send_text(
+                json.dumps({"type": "error", "text": "No DEEPGRAM_API_KEY in .env."})
+            )
+            await websocket.close()
+            return
+
+        app.state.events = []
+
+        def record(event: dict) -> None:
+            app.state.events.append(event)
+
+        transport = FastAPIWebsocketTransport(
+            websocket=websocket,
+            params=FastAPIWebsocketParams(
+                audio_in_enabled=True,
+                audio_out_enabled=True,
+                audio_in_sample_rate=web_audio.SAMPLE_RATE,
+                audio_out_sample_rate=web_audio.SAMPLE_RATE,
+                serializer=web_audio.RawPCMSerializer(),
+                # The browser plays whatever arrives, so the server paces
+                # audio in real time rather than dumping a whole sentence at
+                # once. That keeps an interruption able to cut it off.
+                add_wav_header=False,
+            ),
+        )
+        task, _agent = build_pipeline(
+            transport, on_event=record, sample_rate=web_audio.SAMPLE_RATE
+        )
+
+        # Unlike the WebRTC offer, this request IS the call, so it is
+        # awaited: the handler returns when the caller hangs up.
+        await PipelineRunner(handle_sigint=False).run(task)
 
     web_dir = config.ROOT_DIR / "web"
     if web_dir.exists():
