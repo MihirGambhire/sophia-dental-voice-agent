@@ -485,6 +485,41 @@ was wrong, which is the third time that has happened in this log.
 
 ---
 
+### 21. The shared link worked for me and nobody else
+
+**Symptom.** A public tunnel link worked on the machine running the
+server. A friend opening the same link saw "Call ended" the moment they
+pressed Start call.
+
+**Cause.** The server logs showed every remote attempt going from ICE
+checking straight to closed, never connected. The tunnel carries HTTP
+only. WebRTC audio is peer to peer UDP that never goes through it. With
+the server behind one home router and the caller behind another, and only
+STUN configured, there was no route between them.
+
+**What did not work.** The free relay every tutorial still lists,
+openrelay.metered.ca with the credentials openrelayproject, is retired
+and its hostname no longer resolves. Three other free relays produced no
+relay candidates at all when tested with relay-only ICE.
+
+**Fix.** A free Metered account, whose relay issues short lived
+credentials from a REST endpoint, fetched by the server and served to the
+browser from /api/ice so both ends agree. Verified by forcing the browser
+to relay only, which forbids the local network path entirely, and
+confirming the connection still reached connected. The winning pair was
+relay on the browser side and peer reflexive on the server side.
+
+**Also fixed.** Failing to connect at all and a call that connected and
+then ended both said "Call ended", which is what sent the first round of
+debugging to the friend's browser rather than the network.
+
+**Lesson.** Testing a shared link from the machine that serves it proves
+nothing about sharing it. The relay-only test simulates a remote caller
+from the local machine, which is the only honest check short of a second
+network.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns
