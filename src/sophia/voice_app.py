@@ -50,6 +50,7 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.deepgram.stt import DeepgramSTTService, DeepgramSTTSettings
 from pipecat.services.deepgram.tts import DeepgramTTSService, DeepgramTTSSettings
 from pipecat.transports.base_transport import TransportParams
+from aiortc import RTCIceServer
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 
@@ -186,6 +187,20 @@ class Offer(BaseModel):
     type: str
 
 
+def _aiortc_ice_servers() -> list[RTCIceServer]:
+    """The same ICE list as the browser gets, in aiortc's shape."""
+    servers = []
+    for entry in config.ice_servers():
+        servers.append(
+            RTCIceServer(
+                urls=entry["urls"],
+                username=entry.get("username"),
+                credential=entry.get("credential"),
+            )
+        )
+    return servers
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Sophia")
     app.state.events = []
@@ -204,7 +219,18 @@ def create_app() -> FastAPI:
             "model": config.LLM.model,
             "voice": config.SPEECH.tts_voice,
             "speech_configured": bool(config.SPEECH.deepgram_api_key),
+            "turn_configured": bool(config.TURN_URLS),
         }
+
+    @app.get("/api/ice")
+    async def ice():
+        """
+        How the browser should connect.
+
+        Served rather than hardcoded in the page, so the two ends of the
+        call cannot end up using different ICE servers.
+        """
+        return {"iceServers": config.ice_servers()}
 
     @app.get("/api/events")
     async def events(after: int = 0):
@@ -228,7 +254,11 @@ def create_app() -> FastAPI:
             )
 
         app.state.events = []
-        connection = SmallWebRTCConnection()
+
+        # Without TURN here, the server offers only candidates on its own
+        # network, which a caller anywhere else cannot reach. The call
+        # then fails in ICE checking and the browser reports "Call ended".
+        connection = SmallWebRTCConnection(ice_servers=_aiortc_ice_servers())
         await connection.initialize(sdp=body.sdp, type=body.type)
 
         def record(event: dict) -> None:

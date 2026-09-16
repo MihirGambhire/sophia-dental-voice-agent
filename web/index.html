@@ -126,7 +126,7 @@ const setupEl = document.getElementById('setup');
 const transcriptEl = document.getElementById('transcript');
 const audioEl = document.getElementById('audio');
 
-let pc = null, poller = null, seen = 0;
+let pc = null, poller = null, seen = 0, iceServers = null;
 
 function setState(text, cls) {
   stateEl.textContent = text;
@@ -138,12 +138,27 @@ function showError(message) {
   errEl.hidden = !message;
 }
 
+// Both ends must agree on how to connect, so the page asks the server
+// rather than keeping its own copy. Without a TURN relay here, a call
+// from any machine other than the one running the server fails in ICE
+// checking and looks like an instant hang up.
+fetch('/api/ice').then(r => r.json()).then(cfg => { iceServers = cfg.iceServers; })
+  .catch(() => { iceServers = [{ urls: 'stun:stun.l.google.com:19302' }]; });
+
 fetch('/api/health').then(r => r.json()).then(info => {
   setupEl.innerHTML = 'Model: <code>' + info.model + '</code> via <code>' +
     info.provider + '</code> &nbsp; Voice: <code>' + info.voice + '</code>';
   if (!info.speech_configured) {
     showError('No Deepgram key configured, so the call cannot start.');
     callBtn.disabled = true;
+  }
+  if (!info.turn_configured && location.hostname !== 'localhost'
+      && location.hostname !== '127.0.0.1') {
+    // Being honest up front beats letting someone click Start call and
+    // watch it fail with nothing to go on.
+    showError('Heads up: no TURN relay is configured on this server, so the ' +
+              'call may not connect from your network. If it fails, that is ' +
+              'why, and it is not something you can fix at your end.');
   }
 }).catch(() => {});
 
@@ -215,17 +230,32 @@ callBtn.onclick = async () => {
     transcriptEl.innerHTML = '<div class="empty">Connecting...</div>';
     seen = 0;
 
-    pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+    pc = new RTCPeerConnection({
+      iceServers: iceServers || [{ urls: 'stun:stun.l.google.com:19302' }],
+      iceCandidatePoolSize: 4
+    });
     stream.getTracks().forEach(track => pc.addTrack(track, stream));
     pc.addTransceiver('audio', { direction: 'recvonly' });
     pc.ontrack = event => { audioEl.srcObject = event.streams[0]; };
 
+    let everConnected = false;
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'connected') {
+        everConnected = true;
         setState('On the call', 'live');
         hangBtn.disabled = false;
       } else if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) {
-        cleanup('Call ended');
+        // Never connecting at all is a different problem from a call that
+        // started and then ended, and saying "Call ended" for both sent
+        // the first testers looking in the wrong place entirely.
+        if (!everConnected) {
+          showError('Could not establish the audio connection. This is usually a ' +
+                    'firewall or network restriction. Try a different network, ' +
+                    'or a phone on mobile data.');
+          cleanup('Could not connect');
+        } else {
+          cleanup('Call ended');
+        }
       }
     };
 

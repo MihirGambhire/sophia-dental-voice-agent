@@ -202,4 +202,69 @@ class SpeechSettings:
 LLM = LLMSettings()
 SPEECH = SpeechSettings()
 
+
+# ---------------------------------------------------------------------------
+# WebRTC connectivity
+# ---------------------------------------------------------------------------
+#
+# A STUN server is enough when both ends can reach each other directly,
+# which is true when the browser and the server are on the same machine.
+# It is NOT enough over the internet.
+#
+# This was a real failure. Sharing a Cloudflare tunnel link worked
+# perfectly on the machine running the server and failed for everyone
+# else with "Call ended". The tunnel carries HTTP only. WebRTC audio is
+# peer to peer UDP that never goes through it, so with the server behind
+# one home router and the caller behind another, there is no route and
+# ICE dies in the checking state.
+#
+# TURN fixes it by relaying the media through a public server. Both ends
+# have to be told about it, so the browser fetches this same list from
+# /api/ice rather than keeping its own copy that could drift.
+
+# There is deliberately no default TURN server.
+#
+# The obvious candidate was Open Relay's old anonymous endpoint,
+# openrelay.metered.ca with the credentials openrelayproject. It was tried
+# and it is dead: the hostname no longer resolves, and the service now
+# requires a free account. Shipping a default that silently fails is worse
+# than shipping none, because the call still breaks and the configuration
+# looks correct.
+#
+# So TURN is opt in. Without it, calls work between a browser and a server
+# on the same machine and nowhere else. With it, they work across the
+# internet. /api/health reports which of those you have.
+TURN_URLS = tuple(
+    url.strip() for url in _env("TURN_URLS", "").split(",") if url.strip()
+)
+TURN_USERNAME = _env("TURN_USERNAME", "")
+TURN_CREDENTIAL = _env("TURN_CREDENTIAL", "")
+
+STUN_URLS = tuple(
+    url.strip()
+    for url in _env(
+        "STUN_URLS", "stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302"
+    ).split(",")
+    if url.strip()
+)
+
+
+def ice_servers() -> list[dict]:
+    """
+    The ICE servers both ends should use, in the browser's own format.
+
+    Served to the page from /api/ice so the two sides can never disagree
+    about how to connect.
+    """
+    servers: list[dict] = [{"urls": list(STUN_URLS)}]
+    if TURN_URLS:
+        servers.append(
+            {
+                "urls": list(TURN_URLS),
+                "username": TURN_USERNAME,
+                "credential": TURN_CREDENTIAL,
+            }
+        )
+    return servers
+
 LOG_LEVEL = _env("LOG_LEVEL", "INFO")
