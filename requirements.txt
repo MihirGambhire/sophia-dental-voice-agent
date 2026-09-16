@@ -1,30 +1,31 @@
-# Days 1 to 3: data layer, policies, text agent, FAQ retrieval.
-# Voice dependencies (Pipecat, Deepgram) are added on Day 4, after checking
-# their current versions against the official docs.
-# Versions below were checked against PyPI on 16 September 2026.
+# Versions checked against PyPI on 16 September 2026.
 
 python-dotenv==1.2.3
-# Windows has no system IANA timezone database, so Europe/London
-# is unavailable to zoneinfo without this.
+# Windows has no system IANA timezone database, so Europe/London is
+# unavailable to zoneinfo without this.
 tzdata==2026.4
-groq==1.7.0
-# Fallback provider. Groq is faster, but its free tier allows only 8000
-# tokens per minute, which a tool calling conversation can exhaust in a
-# single turn. See docs/ENGINEERING_LOG.md.
+
+# Language models. Gemini is the default: Groq answers a single request
+# faster, but its free tier allows 8000 tokens per minute, which a tool
+# calling conversation exhausts. See docs/ENGINEERING_LOG.md.
 google-genai==2.23.0
+groq==1.7.0
+
+# Web server
 fastapi==0.141.1
 uvicorn[standard]==0.53.0
 pydantic==2.13.5
 
-# FAQ retrieval
-chromadb==1.5.9
-sentence-transformers==6.0.1
-
-# Voice layer, Day 4. Versions checked against PyPI on 16 September 2026.
-# The webrtc extra is what removes the need for a phone number, and so the
-# need to spend anything.
+# Voice: Deepgram speech in and out, and the pipeline around it. The call
+# itself travels over a WebSocket; the webrtc extra is kept for local use.
 pipecat-ai[deepgram,webrtc,runner]==1.10.0
 
 # Tests
 pytest==9.1.1
-freezegun==1.5.5
+
+# Deliberately absent: chromadb and sentence-transformers. The plan was
+# embedding retrieval over the practice documents. The corpus turned out to
+# be eight short documents with a fixed vocabulary, where plain keyword
+# retrieval passes every retrieval test and returns nothing rather than a
+# weak match. Embeddings would have added a download of about 2.5 GB,
+# mostly PyTorch, for no measured gain. See src/sophia/knowledge.py.

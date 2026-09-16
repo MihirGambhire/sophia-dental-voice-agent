@@ -105,6 +105,8 @@ class TurnRecord:
     # What the model tried to say, when it claimed something untrue and
     # was corrected before the caller heard it. Kept for the eval suite.
     corrected_claim: str | None = None
+    # True when the medicine rule changed the reply before it was spoken.
+    medication_rule_applied: bool = False
 
     @property
     def tools_used(self) -> list[str]:
@@ -370,6 +372,14 @@ class SophiaAgent:
             record.corrected_claim = record.reply
             record.reply = corrected
             self.messages[-1] = {"role": "assistant", "content": corrected}
+
+        enforced = safety.enforce_medication_rule(
+            record.reply, caller_asked=safety.asks_about_medication(text)
+        )
+        if enforced is not None:
+            record.medication_rule_applied = True
+            record.reply = enforced
+            self.messages[-1] = {"role": "assistant", "content": enforced}
 
         record.latency_seconds = (clock.now() - started).total_seconds()
         self.history.append(record)

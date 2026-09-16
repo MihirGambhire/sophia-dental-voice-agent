@@ -158,6 +158,22 @@ MEDICATION = (
     r"is it safe to take|mix.*(paracetamol|ibuprofen)|overdose"
 )
 
+_MEDICINES = r"ibuprofen|paracetamol|aspirin|co-?codamol|codeine|naproxen|nurofen|amoxicillin|antibiotics?"
+
+# Medicine advice in Sophia's own reply: a dose, a schedule, or a
+# recommendation of a named medicine. Checked on what she is about to say,
+# not on what the caller asked, so it catches advice however it arose.
+DOSE_ADVICE = (
+    r"\b\d+\s?(?:mg|milligrams?)\b|"
+    r"\btake (?:one|two|three|four|1|2|3|4) (?:tablets?|pills?|capsules?)|"
+    r"\bevery (?:four|six|eight|4|6|8) hours\b|"
+    r"\bmaximum (?:of|dose)\b|\bup to (?:\d+|four|eight) (?:tablets|times)\b|"
+    rf"\b(?:you (?:can|could|should|might) (?:try |take |use |have )|"
+    rf"i(?:'d| would) (?:suggest|recommend) (?:taking |trying )?)(?:some )?(?:{_MEDICINES})\b"
+)
+
+REFERRAL = r"pharmacist|\b111\b"
+
 
 EMERGENCY_RULES: tuple[tuple[str, str], ...] = (
     ("breathing_or_swallowing", BREATHING),
@@ -243,3 +259,28 @@ def asks_about_medication(text: str) -> bool:
     the middle of an entirely routine call.
     """
     return _matches(MEDICATION, _normalise(text))
+
+
+def enforce_medication_rule(reply: str, caller_asked: bool) -> str | None:
+    """
+    Make sure Sophia's reply gives no medicine advice. None means no change.
+
+    Until this existed, the only thing stopping medicine advice was a line
+    in the prompt, which contradicts the rule the whole project runs on:
+    anything that matters is enforced in code. Two cases:
+
+      the reply contains a dose, a schedule, or recommends a named medicine
+          -> replaced entirely with the scripted refusal and referral
+      the caller asked about medicine and the reply does not point them to
+          a pharmacist or 111 -> the referral is added
+
+    Matching is on Sophia's own words, so a refusal that happens to name a
+    medicine ("I can't advise on ibuprofen") passes, while "you could take
+    ibuprofen" does not.
+    """
+    text = reply or ""
+    if re.search(DOSE_ADVICE, text, re.IGNORECASE):
+        return MEDICATION_SCRIPT
+    if caller_asked and not re.search(REFERRAL, text, re.IGNORECASE):
+        return f"{text.rstrip()} {MEDICATION_SCRIPT}".strip()
+    return None

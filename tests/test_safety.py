@@ -367,3 +367,61 @@ def test_an_urgent_call_reaches_the_model_and_is_flagged_to_it(conn):
     state = captured["messages"][-1]["content"]
     assert "same day" in state
     assert "urgent" in state.lower()
+
+
+# ---------------------------------------------------------------------------
+# The medicine rule, enforced on what Sophia is about to say
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "advice",
+    [
+        "You could take ibuprofen for that.",
+        "I'd recommend taking paracetamol.",
+        "Take two tablets every four hours.",
+        "The usual dose is 400mg.",
+        "You can have up to eight tablets a day.",
+        "I would suggest some co-codamol.",
+    ],
+)
+def test_medicine_advice_in_a_reply_is_replaced_with_a_referral(advice):
+    result = safety.enforce_medication_rule(advice, caller_asked=True)
+    assert result == safety.MEDICATION_SCRIPT
+
+
+def test_a_refusal_that_names_a_medicine_is_left_alone():
+    """Naming a medicine to refuse advice about it is not advice."""
+    reply = "I'm not able to advise on ibuprofen or paracetamol. A pharmacist can help."
+    assert safety.enforce_medication_rule(reply, caller_asked=True) is None
+
+
+def test_a_medicine_question_without_a_referral_gets_one_added():
+    reply = "I'm sorry, I can't help with that."
+    result = safety.enforce_medication_rule(reply, caller_asked=True)
+    assert result.startswith("I'm sorry, I can't help with that.")
+    assert "pharmacist" in result and "111" in result
+
+
+def test_an_ordinary_reply_to_an_ordinary_question_is_untouched():
+    assert safety.enforce_medication_rule("We open at 8am.", caller_asked=False) is None
+
+
+def test_the_rule_is_applied_by_the_agent_before_the_caller_hears_it(conn):
+    from sophia.agent_text import SophiaAgent
+
+    class Advises:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+        def _create(self, **kwargs):
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+                content="You should take ibuprofen, 400mg every eight hours.", tool_calls=None))])
+
+    agent = SophiaAgent(conn, now=clock.combine(date(2026, 9, 21), time(10, 0)), client=Advises())
+    turn = agent.say("What painkiller should I take?")
+
+    assert turn.medication_rule_applied
+    assert "400" not in turn.reply
+    assert "pharmacist" in turn.reply
+    assert agent.messages[-1]["content"] == turn.reply

@@ -110,9 +110,6 @@ NEW_PATIENT_SNC_LIMIT = 2
 # ---------------------------------------------------------------------------
 
 DB_PATH = ROOT_DIR / _env("SOPHIA_DB_PATH", "data/sophia.db")
-CHROMA_DIR = DATA_DIR / "chroma"
-CHROMA_COLLECTION = "practice_info"
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 
 # ---------------------------------------------------------------------------

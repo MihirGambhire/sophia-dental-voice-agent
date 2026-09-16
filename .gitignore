@@ -14,7 +14,6 @@ htmlcov/
 # Project data that is generated, not authored
 data/sophia.db
 data/sophia.db-journal
-data/chroma/
 logs/
 transcripts/
 
