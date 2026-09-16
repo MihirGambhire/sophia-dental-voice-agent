@@ -1,0 +1,26 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Project data that is generated, not authored
+data/sophia.db
+data/sophia.db-journal
+data/chroma/
+logs/
+transcripts/
+
+# OS and editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.venv/

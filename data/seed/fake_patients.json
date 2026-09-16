@@ -1,0 +1,227 @@
+{
+  "_note": "Entirely invented patients. No real person, no real patient record. Dates are stored as offsets from the day the database is seeded, so the demo stays realistic whenever it is run. days_ago counts backwards from today, in_days counts forwards. The seeder moves any appointment that lands on a weekend, a lunch hour, or a day the named clinician does not work forward to the next time that clinician is actually available.",
+  "patients": [
+    {
+      "code": "hollis",
+      "full_name": "Margaret Hollis",
+      "dob": "1958-03-12",
+      "postcode": "WA1 2NF",
+      "phone": "07700 900412",
+      "email": "m.hollis@example.com",
+      "patient_type": "nhs",
+      "first_seen_days_ago": 2600,
+      "last_attended_days_ago": 240,
+      "scenario": "Long standing NHS patient, seen 8 months ago. Happy path for a routine NHS examination at Band 1.",
+      "attendance_events": [],
+      "appointments": []
+    },
+    {
+      "code": "okafor",
+      "full_name": "Daniel Okafor",
+      "dob": "1987-11-02",
+      "postcode": "WA4 6QT",
+      "phone": "07700 900185",
+      "email": "d.okafor@example.com",
+      "patient_type": "private",
+      "first_seen_days_ago": 1100,
+      "last_attended_days_ago": 180,
+      "scenario": "Established private patient, seen 6 months ago. Routine private examination at £50, and eligible for standard hygiene lengths.",
+      "attendance_events": [],
+      "appointments": [
+        {
+          "type_code": "PRIV_ROUTINE_EXAM",
+          "clinician_code": "ellis",
+          "in_days": 3,
+          "time": "10:20",
+          "status": "booked",
+          "scenario": "Cancelling this is more than 24 hours away, so no short notice cancellation."
+        }
+      ]
+    },
+    {
+      "code": "pritchard",
+      "full_name": "Susan Pritchard",
+      "dob": "1971-07-25",
+      "postcode": "WA2 8HL",
+      "phone": "07700 900733",
+      "email": "s.pritchard@example.com",
+      "patient_type": "private",
+      "first_seen_days_ago": 2200,
+      "last_attended_days_ago": 1520,
+      "scenario": "Registration has lapsed, last attended just over four years ago. Must be treated as a new patient: £85 new patient examination, and eligible for hygienist direct access at £140.",
+      "attendance_events": [],
+      "appointments": []
+    },
+    {
+      "code": "kaur",
+      "full_name": "Amrit Kaur",
+      "dob": "1995-01-18",
+      "postcode": "WA5 1DJ",
+      "phone": "07700 900268",
+      "email": "a.kaur@example.com",
+      "patient_type": "private",
+      "first_seen_days_ago": 150,
+      "last_attended_days_ago": 150,
+      "scenario": "New patient by the attendance policy, at the practice less than 12 months, and already has one short notice cancellation. A second short notice cancellation reaches the discharge threshold for a new patient.",
+      "attendance_events": [
+        { "event_type": "SNC", "days_ago": 60 }
+      ],
+      "appointments": [
+        {
+          "type_code": "HYG_30",
+          "clinician_code": "bennett",
+          "in_days": 1,
+          "time": "09:30",
+          "status": "booked",
+          "scenario": "Less than 24 hours away, so cancelling records a second short notice cancellation and triggers the discharge risk warning."
+        }
+      ]
+    },
+    {
+      "code": "brennan",
+      "full_name": "Kevin Brennan",
+      "dob": "1966-09-30",
+      "postcode": "WA1 4PS",
+      "phone": "07700 900591",
+      "email": "k.brennan@example.com",
+      "patient_type": "nhs",
+      "first_seen_days_ago": 1800,
+      "last_attended_days_ago": 320,
+      "scenario": "Existing patient with two short notice cancellations inside 24 months. A third reaches the discharge threshold for an existing patient.",
+      "attendance_events": [
+        { "event_type": "SNC", "days_ago": 500 },
+        { "event_type": "SNC", "days_ago": 200 }
+      ],
+      "appointments": [
+        {
+          "type_code": "NHS_EXAM",
+          "clinician_code": "nair",
+          "in_days": 0,
+          "time": "16:40",
+          "status": "booked",
+          "scenario": "Later today, so cancelling is inside 24 hours."
+        }
+      ]
+    },
+    {
+      "code": "whelan",
+      "full_name": "Thomas Whelan",
+      "dob": "1990-05-14",
+      "postcode": "WA2 9RB",
+      "phone": "07700 900047",
+      "email": "t.whelan@example.com",
+      "patient_type": "nhs",
+      "first_seen_days_ago": 900,
+      "last_attended_days_ago": 400,
+      "scenario": "Existing patient with one failed to attend inside 24 months. One failure counts as two short notice cancellations, so one more short notice cancellation reaches the existing patient threshold.",
+      "attendance_events": [
+        { "event_type": "FTA", "days_ago": 300 }
+      ],
+      "appointments": []
+    },
+    {
+      "code": "ashworth",
+      "full_name": "Eileen Ashworth",
+      "dob": "1949-12-06",
+      "postcode": "WA1 1QN",
+      "phone": "07700 900920",
+      "email": "e.ashworth@example.com",
+      "patient_type": "nhs",
+      "first_seen_days_ago": 4000,
+      "last_attended_days_ago": 190,
+      "scenario": "Has an appointment tomorrow, used for the outbound day before reminder call.",
+      "attendance_events": [],
+      "appointments": [
+        {
+          "type_code": "NHS_EXAM",
+          "clinician_code": "whitfield",
+          "in_days": 1,
+          "time": "11:00",
+          "status": "booked",
+          "scenario": "Target of the outbound reminder flow."
+        }
+      ]
+    },
+    {
+      "code": "marsden",
+      "full_name": "Gary Marsden",
+      "dob": "1979-02-21",
+      "postcode": "WA4 1LT",
+      "phone": "07700 900384",
+      "email": "g.marsden@example.com",
+      "patient_type": "private",
+      "first_seen_days_ago": 1400,
+      "last_attended_days_ago": 95,
+      "scenario": "Recently seen private patient with a root canal consultation booked with the endodontist. Used to test clinician specific availability.",
+      "attendance_events": [],
+      "appointments": [
+        {
+          "type_code": "RCT_CONSULT",
+          "clinician_code": "ainsworth",
+          "in_days": 5,
+          "time": "10:00",
+          "status": "booked",
+          "scenario": "The endodontist only works Wednesday and Thursday, so the seeder will move this to his next working slot."
+        }
+      ]
+    },
+    {
+      "code": "doherty_child",
+      "full_name": "Liam Doherty",
+      "dob": "2017-06-08",
+      "postcode": "WA5 3GH",
+      "phone": "07700 900776",
+      "email": "r.doherty@example.com",
+      "patient_type": "nhs",
+      "first_seen_days_ago": 1200,
+      "last_attended_days_ago": 210,
+      "guardian_name": "Rachel Doherty",
+      "guardian_dob": "1989-04-17",
+      "scenario": "Child patient. A parent or guardian books on their behalf, so verification runs against the guardian and then the child's details are confirmed.",
+      "attendance_events": [],
+      "appointments": []
+    },
+    {
+      "code": "bannerman",
+      "full_name": "Iris Bannerman",
+      "dob": "1962-10-11",
+      "postcode": "WA1 3TY",
+      "phone": "07700 900655",
+      "email": "i.bannerman@example.com",
+      "patient_type": "private",
+      "first_seen_days_ago": 3000,
+      "last_attended_days_ago": 30,
+      "scenario": "Seen a month ago. Used for the wrong date of birth verification test, where Sophia must reveal nothing.",
+      "attendance_events": [],
+      "appointments": []
+    },
+    {
+      "code": "reyes",
+      "full_name": "Carlos Reyes",
+      "dob": "1984-08-03",
+      "postcode": "WA2 7EN",
+      "phone": "07700 900219",
+      "email": "c.reyes@example.com",
+      "patient_type": "nhs",
+      "first_seen_days_ago": 700,
+      "last_attended_days_ago": 1140,
+      "scenario": "Attended just over three years ago, so registration has lapsed by a small margin. Tests the boundary of the three year rule.",
+      "attendance_events": [],
+      "appointments": []
+    },
+    {
+      "code": "fairbanks",
+      "full_name": "Joan Fairbanks",
+      "dob": "1955-04-29",
+      "postcode": "WA4 3WD",
+      "phone": "07700 900138",
+      "email": "j.fairbanks@example.com",
+      "patient_type": "private",
+      "first_seen_days_ago": 2500,
+      "last_attended_days_ago": 1020,
+      "scenario": "Overdue a check up but not yet lapsed, just under three years. Target for the outbound recall call.",
+      "attendance_events": [],
+      "appointments": []
+    }
+  ]
+}

@@ -1,0 +1,97 @@
+{
+  "_note": "Invented names. Roles mirror the real practice structure described in CLAUDE.md section 6.9, but no real person is represented. weekday: 0 = Monday ... 4 = Friday. Hours are split into a morning and an afternoon block so the 13:00 to 14:00 lunch closure is impossible to book by construction.",
+  "clinicians": [
+    {
+      "code": "whitfield",
+      "name": "Dr Helen Whitfield",
+      "role": "principal_dentist",
+      "sees_nhs": true,
+      "sees_private": true,
+      "special_interest": "Restorative dentistry and implants",
+      "hours": [
+        { "weekday": 0, "start": "08:00", "end": "13:00" },
+        { "weekday": 0, "start": "14:00", "end": "18:00" },
+        { "weekday": 1, "start": "08:00", "end": "13:00" },
+        { "weekday": 1, "start": "14:00", "end": "18:00" },
+        { "weekday": 2, "start": "08:00", "end": "13:00" },
+        { "weekday": 3, "start": "08:00", "end": "13:00" },
+        { "weekday": 3, "start": "14:00", "end": "18:00" }
+      ]
+    },
+    {
+      "code": "ellis",
+      "name": "Dr Raymond Ellis",
+      "role": "associate_dentist",
+      "sees_nhs": true,
+      "sees_private": true,
+      "special_interest": "General dentistry, practice partner",
+      "hours": [
+        { "weekday": 0, "start": "08:00", "end": "13:00" },
+        { "weekday": 0, "start": "14:00", "end": "18:00" },
+        { "weekday": 1, "start": "14:00", "end": "18:00" },
+        { "weekday": 2, "start": "08:00", "end": "13:00" },
+        { "weekday": 2, "start": "14:00", "end": "18:00" },
+        { "weekday": 4, "start": "08:00", "end": "13:00" },
+        { "weekday": 4, "start": "14:00", "end": "18:00" }
+      ]
+    },
+    {
+      "code": "nair",
+      "name": "Dr Priya Nair",
+      "role": "associate_dentist",
+      "sees_nhs": true,
+      "sees_private": true,
+      "special_interest": "General dentistry, children and nervous patients",
+      "hours": [
+        { "weekday": 1, "start": "08:00", "end": "13:00" },
+        { "weekday": 1, "start": "14:00", "end": "18:00" },
+        { "weekday": 2, "start": "08:00", "end": "13:00" },
+        { "weekday": 3, "start": "08:00", "end": "13:00" },
+        { "weekday": 3, "start": "14:00", "end": "18:00" },
+        { "weekday": 4, "start": "08:00", "end": "13:00" }
+      ]
+    },
+    {
+      "code": "ainsworth",
+      "name": "Dr Thomas Ainsworth",
+      "role": "endodontist",
+      "sees_nhs": false,
+      "sees_private": true,
+      "special_interest": "Root canal treatment, private only",
+      "hours": [
+        { "weekday": 2, "start": "09:00", "end": "13:00" },
+        { "weekday": 3, "start": "09:00", "end": "13:00" },
+        { "weekday": 3, "start": "14:00", "end": "17:00" }
+      ]
+    },
+    {
+      "code": "bennett",
+      "name": "Claire Bennett",
+      "role": "hygiene_therapist",
+      "sees_nhs": false,
+      "sees_private": true,
+      "special_interest": "Dental hygiene and periodontal therapy",
+      "hours": [
+        { "weekday": 0, "start": "09:00", "end": "13:00" },
+        { "weekday": 0, "start": "14:00", "end": "17:00" },
+        { "weekday": 2, "start": "09:00", "end": "13:00" },
+        { "weekday": 2, "start": "14:00", "end": "17:00" },
+        { "weekday": 4, "start": "09:00", "end": "13:00" }
+      ]
+    },
+    {
+      "code": "doyle",
+      "name": "Megan Doyle",
+      "role": "hygiene_therapist",
+      "sees_nhs": false,
+      "sees_private": true,
+      "special_interest": "Dental hygiene, stain removal and prevention advice",
+      "hours": [
+        { "weekday": 1, "start": "09:00", "end": "13:00" },
+        { "weekday": 1, "start": "14:00", "end": "17:00" },
+        { "weekday": 3, "start": "09:00", "end": "13:00" },
+        { "weekday": 4, "start": "14:00", "end": "17:00" }
+      ]
+    }
+  ]
+}

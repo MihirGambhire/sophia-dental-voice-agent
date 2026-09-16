@@ -1,0 +1,38 @@
+%% Sophia architecture.
+%% The point this diagram makes: the safety screen sits in front of the
+%% language model, and every business rule sits behind it in plain Python.
+flowchart TB
+    Caller([Caller in a browser])
+
+    subgraph Voice["Voice layer, Pipecat over WebRTC"]
+        STT[Deepgram STT, en-GB]
+        TTS[Deepgram TTS, British voice]
+    end
+
+    subgraph Brain["Agent"]
+        LLM[Groq, Llama 3.3 70B<br/>Gemini Flash as fallback]
+        Safety[[Safety screen<br/>keyword rules, then classifier]]
+    end
+
+    subgraph Logic["Business logic, deterministic Python"]
+        Tools[tools.py<br/>9 tool implementations]
+        Policies[policies.py<br/>fees, eligibility, SNC and FTA rules]
+        Clock[clock.py<br/>opening hours, 8am release, BST]
+    end
+
+    subgraph Data["Data"]
+        SQLite[(SQLite<br/>patients, appointments,<br/>urgent slots, attendance)]
+        Chroma[(ChromaDB<br/>practice FAQ)]
+    end
+
+    Caller <--> STT
+    TTS --> Caller
+    STT --> Safety
+    Safety -->|red flag| TTS
+    Safety -->|safe to continue| LLM
+    LLM <-->|tool calls| Tools
+    LLM --> TTS
+    Tools --> Policies
+    Policies --> Clock
+    Tools <--> SQLite
+    Tools <--> Chroma

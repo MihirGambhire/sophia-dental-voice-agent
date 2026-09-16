@@ -1,0 +1,21 @@
+# Days 1 to 3: data layer, policies, text agent, FAQ retrieval.
+# Voice dependencies (Pipecat, Deepgram) are added on Day 4, after checking
+# their current versions against the official docs.
+# Versions below were checked against PyPI on 16 September 2026.
+
+python-dotenv==1.2.3
+# Windows has no system IANA timezone database, so Europe/London
+# is unavailable to zoneinfo without this.
+tzdata==2026.4
+groq==1.7.0
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+pydantic==2.13.5
+
+# FAQ retrieval
+chromadb==1.5.9
+sentence-transformers==6.0.1
+
+# Tests
+pytest==9.1.1
+freezegun==1.5.5
