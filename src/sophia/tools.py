@@ -125,6 +125,39 @@ def _normalise_dob(value: str) -> str | None:
     return None
 
 
+_NUMERIC_DATE = re.compile(r"\b(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})\b")
+
+
+def _dob_readings(dob: str, normalised: str, utterances: list[str] | None) -> set[str]:
+    """
+    Every date of birth the caller could have meant.
+
+    Speech to text wrote "sixth of December nineteen forty nine" as
+    "12/06/1949", month first, despite the UK English model. Read the UK way
+    that is 12 June, and a real patient failed verification over voice. A
+    numeric date with both parts twelve or under cannot be read one way with
+    certainty, so when the caller's own words contain one, and it is the
+    date the model passed, both readings are tried. Name and postcode must
+    still match, and to exactly one record, so this adds no way in for
+    someone who does not already know the patient's details.
+    """
+    readings = {normalised}
+    for text in [dob, *(utterances or [])]:
+        for first, second, year in _NUMERIC_DATE.findall(text or ""):
+            a, b = int(first), int(second)
+            if a > 12 or b > 12 or a == b:
+                continue
+            both = set()
+            for day, month in ((a, b), (b, a)):
+                try:
+                    both.add(date(int(year), month, day).strftime(clock.DB_DATE_FORMAT))
+                except ValueError:
+                    pass
+            if normalised in both:
+                readings |= both
+    return readings
+
+
 # What a model passes when it does not actually have a value yet.
 _PLACEHOLDERS = {"", "unknown", "none", "n/a", "na", "not provided", "not given", "null", "?"}
 
@@ -385,8 +418,10 @@ class SophiaTools:
                 ),
             }
 
+        readings = sorted(_dob_readings(dob, normalised_dob, self.caller_heard))
         rows = self.conn.execute(
-            "SELECT * FROM patients WHERE dob = ?", (normalised_dob,)
+            f"SELECT * FROM patients WHERE dob IN ({', '.join('?' for _ in readings)})",
+            readings,
         ).fetchall()
         same_address = [
             row for row in rows if _normalise_postcode(row["postcode"]).upper() == spoken_postcode

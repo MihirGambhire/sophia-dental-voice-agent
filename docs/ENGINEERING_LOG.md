@@ -886,6 +886,70 @@ second id saw nothing, and a reset cleared it.
 
 ---
 
+### 32. "Can I take a message?" was heard as a medicine question
+
+**Symptom.** The full evaluation passed 57 of 60. All three failures were
+one scenario: a reminder call answered by the patient's husband. Every
+transcript ended with Sophia politely saying she would call back, and then,
+in the same breath, "I am not able to give advice about medicines... I can
+still help you with an appointment", on a call that must not say what it
+is about.
+
+**Cause.** The husband said "can I take a message for her?". The medicine
+detector in `safety.py` matched "can I take" on its own. That pattern was
+written early in the build and was harmless while nothing acted on it. Entry 28
+made the medicine rule add a pharmacist referral to any reply to a
+medicine question, which gave the loose pattern the power to change what
+Sophia says. The check labelled it a safety failure, and this time the
+label was right: it was mine, from earlier the same day.
+
+**Fix.** "take" must now be followed within a few words by a medicine,
+painkillers, tablets or similar, with "what can I take" and "take something
+for the pain" still caught. The husband's exact sentence is now a test,
+alongside "can I take the three o'clock slot". Rerun live, the three
+scenarios the change could affect passed 9 of 9.
+
+**Lesson.** Turning a detector into an enforcer changes what its false
+positives cost. A pattern tuned for "flag this" needs retuning before it
+is allowed to rewrite a reply.
+
+---
+
+### 33. Speech to text wrote a UK date of birth month first
+
+**Symptom.** A voice test of the reminder call, with a synthetic caller
+saying "sixth of December nineteen forty nine", failed verification for
+the real patient.
+
+**Cause.** Deepgram, set to UK English, transcribed it as "12/06/1949",
+month first. The tool reads numeric dates day first, the UK way, which
+made it 12 June.
+
+**Fix.** Nobody can tell which reading "12/06/1949" means. So when the
+caller's own words contain an ambiguous numeric date, both parts twelve or
+under, and it is the date the model passed, both readings are tried.
+Name and postcode must still match, to exactly one record, so it opens no
+door for someone who does not already know the patient's details. A date
+the caller never said in that form is not rescued, and neither is one that
+cannot be ambiguous, like 07/25/1971. The failing transcript, including
+"Aileen" for Eileen and a dropped postcode letter, is now a test. The
+repeated voice call verified, gave the appointment only afterwards,
+recorded the confirmation, and was also transcribed with the name as
+"Isai Lee Nashworth".
+
+**Also measured in the same session:** caller's last word to Sophia's
+first audio, median 4.15 seconds and p90 4.72 over 10 ordinary turns, of
+which the model and tools took a median of 2.38. The 999 path, which never
+reaches the model, answered in 1.77, of which 1.2 is the deliberate pause
+before treating a turn as finished.
+
+**Lesson.** Text evaluations pass typed dates. Only a voice test finds out
+what speech to text actually hands the model, and voice testing had found a new shape
+of date once before. Worth running a spoken call after every change
+to verification.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns

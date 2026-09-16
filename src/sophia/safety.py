@@ -151,14 +151,24 @@ URGENT_PATTERNS = (
     r"face.*swollen|swollen face|swollen cheek|swollen gum"
 )
 
+_MEDICINES = r"ibuprofen|paracetamol|aspirin|co-?codamol|codeine|naproxen|nurofen|amoxicillin|antibiotics?"
+
 # Anything about medicines, which Sophia must never advise on.
+#
+# "can i take" used to match on its own. Harmless while nothing acted on it,
+# but once the medicine rule started adding a referral to replies, a husband
+# answering a reminder call with "can I take a message for her?" was told
+# Sophia could not advise on medicines, and could help "with an
+# appointment", on a call that must not say what it is about. It failed all
+# three runs of that scenario. "take" now has to be followed, within a few
+# words, by something that is a medicine.
+_MEDICINE_WORDS = rf"(?:{_MEDICINES}|pain ?killers?|pills?|tablets?|medicines?|medication)"
 MEDICATION = (
     r"what painkiller|which painkiller|how many (paracetamol|ibuprofen|pills|tablets)|"
-    r"can i take|should i take|antibiotic|amoxicillin|"
-    r"is it safe to take|mix.*(paracetamol|ibuprofen)|overdose"
+    rf"\b(?:can|should|could) i (?:take|have)(?:\s+\w+){{0,3}}\s+{_MEDICINE_WORDS}\b|"
+    r"\bwhat (?:can|should|could) i take\b|\btake\b.{0,25}\bfor (?:the|my) (?:pain|toothache)|"
+    r"antibiotic|amoxicillin|is it safe to take|mix.*(paracetamol|ibuprofen)|overdose"
 )
-
-_MEDICINES = r"ibuprofen|paracetamol|aspirin|co-?codamol|codeine|naproxen|nurofen|amoxicillin|antibiotics?"
 
 # Medicine advice in Sophia's own reply: a dose, a schedule, or a
 # recommendation of a named medicine. Checked on what she is about to say,

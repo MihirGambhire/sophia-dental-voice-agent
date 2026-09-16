@@ -235,6 +235,34 @@ def test_an_nhs_patient_is_quoted_the_band_one_charge(conn):
     assert result["fee"] == "£27.90"
 
 
+def test_a_month_first_date_from_speech_to_text_still_verifies(conn):
+    """
+    Over a real voice call, "sixth of December nineteen forty nine" came
+    back from speech to text as "12/06/1949", and the patient was refused.
+    This is that transcript, word for word, including the misheard name and
+    the dropped postcode letter.
+    """
+    session = at(conn, a_weekday_at(10))
+    session.caller_heard = ["Hello. Yes. Speaking.", "It's Aileen Ashworth, 12/06/1949 w one one q n."]
+    result = session.verify_patient("Aileen Ashworth", "1949-06-12", "W1 1QN")
+    assert result["verified"] is True
+
+
+def test_the_other_reading_needs_the_ambiguous_date_in_the_callers_words(conn):
+    """Without "12/06/1949" actually said, the wrong day and month is just wrong."""
+    session = at(conn, a_weekday_at(10))
+    session.caller_heard = ["Eileen Ashworth, twelfth of June nineteen forty nine, W A 1, 1 Q N"]
+    result = session.verify_patient("Eileen Ashworth", "1949-06-12", "WA1 1QN")
+    assert result["verified"] is False
+
+
+def test_an_unambiguous_wrong_date_is_not_rescued(conn):
+    session = at(conn, a_weekday_at(10))
+    session.caller_heard = ["Susan Pritchard, 07/25/1971, W A 2, 8 H L"]
+    result = session.verify_patient("Susan Pritchard", "1971-07-24", "WA2 8HL")
+    assert result["verified"] is False
+
+
 def test_the_model_cannot_switch_an_nhs_patient_to_private_on_its_own(conn):
     """
     A fallback model sent funding="private" for an NHS patient who never

@@ -185,7 +185,7 @@ Unit tests prove the loop, the tools and the guard rails. They cannot
 prove what the real model does with a real caller, which is where nearly
 every serious bug in this project was found. So there are two layers.
 
-**478 unit tests**, run with no API key and no network:
+**487 unit tests**, run with no API key and no network:
 
 ```bash
 python -m pytest -q
@@ -208,11 +208,31 @@ came before an action. Each failure is attributed to a layer, generation,
 retrieval, tool logic or safety, because the fix differs for each.
 
 The script writes `docs/EVAL_RESULTS.md`: pass rates, turn latency, failures
-by layer, and the transcript of every failure. In the first full
-evaluation, three runs of each of the first 18 scenarios, Sophia passed 38
-of 39 completed runs, and the single failure was a bug in the check rather
-than in Sophia. The remaining runs were stopped by the free tier quota and
-are excluded, not counted as passes.
+by layer, and the transcript of every failure.
+
+**Latest full run: 57 of 60 passed**, all 20 scenarios three times each
+against `gemini-3.5-flash-lite`, with 167 of 171 individual checks passing
+and a median agent turn of 2.73 seconds. The 3 failures were all one
+scenario and one bug, and not the model's: a husband answering a reminder
+call said "can I take a message", the medicine rule mistook it for a
+medicine question, and Sophia's goodbye gained a pharmacist referral that
+mentioned an appointment. After the fix, the three scenarios it could
+affect passed 9 of 9. The report keeps the failing transcripts.
+
+**Voice latency**, measured with `scripts/measure_latency.py`: a second
+voice speaks into a real call, and the wait is timed from the caller's last
+word to Sophia's first audio, over 10 ordinary turns and 2 red flags in 2 calls.
+
+| Turn | Median | p90 |
+|---|---|---|
+| Ordinary question, with model and tools | 4.15s | 4.72s |
+| of which the model and tools | 2.38s | 2.89s |
+| 999 red flag, no model | 1.77s | |
+
+Of the 1.77 seconds the voice layer costs on its own, 1.2 is a deliberate
+pause to be sure the caller has finished, because answering half a
+sentence was a worse failure in testing than a short wait. Measured on
+the same machine as the server, so a real caller's network comes on top.
 
 What building the suite taught is worth recording here. It found one real
 bug: asked for "something in the afternoon", Sophia said there were no
@@ -343,7 +363,7 @@ src/sophia/
   web_audio.py      The wire format for call audio
 evals/              The scenario suite: framework and scripted calls
 scripts/            init_db, chat, check_setup, list_models, run_evals
-tests/              478 unit tests
+tests/              487 unit tests
 web/                The call page, transcript and outbound call list
 docs/               Engineering log, evaluation results, architecture diagram
 ```

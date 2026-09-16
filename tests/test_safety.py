@@ -220,6 +220,9 @@ def test_an_emergency_buried_in_a_booking_request_is_still_caught():
         "how many paracetamol can I take",
         "should I take antibiotics",
         "is it safe to take co-codamol",
+        "what can I take for the pain",
+        "can I take some painkillers",
+        "could I have a couple of nurofen",
     ],
 )
 def test_medication_questions_are_recognised(said):
@@ -228,7 +231,16 @@ def test_medication_questions_are_recognised(said):
 
 @pytest.mark.parametrize(
     "said",
-    ["I'd like to book a check up", "how much is a filling", "what time do you open"],
+    [
+        "I'd like to book a check up",
+        "how much is a filling",
+        "what time do you open",
+        # A husband answering a reminder call said this, and was told Sophia
+        # could not advise on medicines.
+        "No, she's not in, this is her husband. Can I take a message for her?",
+        "can I take the three o'clock slot",
+        "should I take my son with me",
+    ],
 )
 def test_ordinary_questions_are_not_medication_questions(said):
     assert not safety.asks_about_medication(said)
