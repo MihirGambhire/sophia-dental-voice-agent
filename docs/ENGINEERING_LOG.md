@@ -59,7 +59,9 @@ remember to apply.
 | `prompts.py` | System prompt, deliberately short and holding no facts |
 | `agent_text.py` | The conversation loop |
 | `knowledge.py` | Lexical retrieval over the practice documents |
-| Tests | 205, then 240, all passing without an API key |
+| `providers.py` | Groq and Gemini behind one interface |
+| `safety.py` | Deterministic clinical screening, ahead of the model |
+| Tests | 328, all passing without an API key |
 
 The safety argument lives in the tool layer, not the prompt. Every patient
 tool raises before doing anything if the caller has not been verified, and
@@ -353,6 +355,97 @@ hard wrapped. Fixed by collapsing whitespace in the test helper.
 
 ---
 
+### 15. Gemini rejected a conversation it had just produced
+
+**Symptom.** `400 INVALID_ARGUMENT: Function call is missing a
+thought_signature in functionCall parts`, on the second request of a
+conversation, replaying tool calls Gemini itself had returned.
+
+**Cause.** Gemini 3 attaches an encrypted `thought_signature` to function
+call parts, carrying its own reasoning state. The documented rule for
+stateless conversations is that the model's parts must be resent **exactly
+as received**. The adapter was rebuilding them from the OpenAI style
+message, which produces something that looks equivalent and is refused.
+
+**Fix.** Cache the `Content` objects Gemini returns, keyed by tool call id,
+and replay those objects rather than reconstructing them.
+
+**Lesson.** When translating between two APIs, the difference that breaks
+you is rarely the request shape. It is the state one of them expects you
+to carry back untouched.
+
+---
+
+### 16. Half the Gemini models were unavailable
+
+**Symptom.** `503 UNAVAILABLE: This model is currently experiencing high
+demand`, on the model named in the config.
+
+**Cause.** Genuine capacity pressure, not a bug. But a demo that depends on
+one model name is a demo that fails on the day.
+
+**Fix.** Probed eight flash variants directly. Three returned 503,
+`gemini-3.6-flash` took 32 seconds for a single tool call, and
+`gemini-3.5-flash-lite` answered in 0.85 seconds with tool calling intact.
+Defaulted to that.
+
+Measured on the same five turn booking conversation:
+
+| Provider | Median | Max | Notes |
+|---|---|---|---|
+| Groq, gpt-oss-120b | 46s | 69s | stalling on the token per minute cap |
+| Gemini, flash-lite | 3.25s | 10.2s | no stalls |
+
+Both wrote the appointment correctly at the NHS fee of £27.90.
+
+**Lesson.** Pick a model by measuring it on your own workload, on the day.
+Benchmarks and documentation describe somebody else's.
+
+---
+
+### 17. A test failure printed both API keys
+
+**Symptom.** A failing test's traceback included the full `repr` of the
+settings object, which contained the Groq and Gemini keys in plain text.
+
+**Cause.** A dataclass puts every field in its `repr` unless told not to.
+Any exception anywhere near config would print them.
+
+**Fix.** `repr=False` on every key field, plus a test that fails if a
+configured key ever appears in a repr again.
+
+**Lesson.** This is how keys reach log files, screenshots and pasted
+tracebacks. It was found by accident, through an unrelated test failing,
+which is not a strategy.
+
+---
+
+### 18. The safety screen missed "I can't really breathe"
+
+**Symptom.** A test asserting that an emergency phrased with hedging is
+still an emergency came back as merely urgent.
+
+**Cause.** The pattern required "can't" and "breathe" to be adjacent. One
+word between them, and a 999 case was silently downgraded to an ordinary
+same day appointment.
+
+**Fix.** Allow up to three words between the difficulty and the thing being
+difficult, across breathing, swallowing, speaking and opening an eye.
+Frightened people hedge. "I can't really breathe very well" and "it's
+probably nothing but I'm struggling a bit to breathe" are the same
+emergency as "I can't breathe".
+
+**Why this is the worst near miss in the log.** Every other bug here costs
+time or money. This one sends someone with a compromised airway away with
+a Thursday appointment. It was caught only because the test was written in
+the caller's words rather than a clinician's.
+
+**Lesson.** Write safety tests in the voice of a frightened person playing
+it down, not in the voice of a clinician being precise. The second kind
+passes and means nothing.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns
@@ -374,6 +467,11 @@ fail will invent a success.
 **Verify the claim, not the command.** The force push ran cleanly and did
 not do what it appeared to. The model name came from official
 documentation and did not exist. Both took one command to check.
+
+**Be asymmetric where the costs are asymmetric.** The safety screen is
+deliberately over cautious, because a false alarm wastes an evening and a
+miss can kill. Its tests are written in the words a frightened caller
+actually uses, and they check the misses far harder than the false alarms.
 
 **Run it.** 205 passing tests did not catch the dead model, the false
 booking, the throttling or the invented opening hours. Every one of those

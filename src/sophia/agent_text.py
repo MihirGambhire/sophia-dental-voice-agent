@@ -17,7 +17,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from . import clock, config, prompts, providers
+from . import clock, config, prompts, providers, safety
 from .schemas import TOOL_SCHEMAS
 from .tools import SophiaTools, ToolError
 
@@ -78,6 +78,8 @@ class TurnRecord:
     tool_calls: list[tuple[str, dict]] = field(default_factory=list)
     tool_results: list[tuple[str, dict]] = field(default_factory=list)
     latency_seconds: float = 0.0
+    safety_level: str = safety.Level.ROUTINE.value
+    escalated_without_model: bool = False
 
     @property
     def tools_used(self) -> list[str]:
@@ -106,6 +108,7 @@ class SophiaAgent:
         self.now = now or clock.now()
         self.client = client or self._build_client()
         self.history: list[TurnRecord] = []
+        self.last_screening: safety.Screening | None = None
 
         self.messages: list[dict] = [
             {"role": "system", "content": prompts.system_prompt(self.now)},
@@ -184,6 +187,12 @@ class SophiaAgent:
             for slot in self.tools.offered_urgent:
                 lines.append(f"  {slot['when']} id={slot['urgent_slot_id']}")
 
+        if self.last_screening and self.last_screening.level is safety.Level.URGENT:
+            lines.append(
+                "The caller has described a same day problem. Offer today's urgent "
+                "appointments, not a routine check up."
+            )
+
         if self.tools.bookings_made:
             lines.append("Already booked on this call:")
             for booking in self.tools.bookings_made:
@@ -251,8 +260,26 @@ class SophiaAgent:
     def say(self, text: str) -> TurnRecord:
         """Send one thing the caller said, and get Sophia's reply."""
         started = clock.now()
+
+        # Screen BEFORE the model sees it. A caller who cannot breathe
+        # gets the 999 instruction from deterministic code, without
+        # waiting on a model to decide, and without any chance of it
+        # deciding otherwise.
+        screening = safety.screen(text)
+        if screening.level is not safety.Level.ROUTINE:
+            self.last_screening = screening
+
         self.messages.append({"role": "user", "content": text})
-        record = TurnRecord(user=text, reply="")
+        record = TurnRecord(user=text, reply="", safety_level=screening.level.value)
+
+        if screening.blocks_booking:
+            record.reply = screening.say
+            record.escalated_without_model = True
+            record.latency_seconds = (clock.now() - started).total_seconds()
+            self.messages.append({"role": "assistant", "content": record.reply})
+            self.history.append(record)
+            self._compact_history()
+            return record
 
         for _ in range(MAX_TOOL_ROUNDS):
             response = self._complete()
