@@ -107,6 +107,9 @@ class TurnRecord:
     corrected_claim: str | None = None
     # True when the medicine rule changed the reply before it was spoken.
     medication_rule_applied: bool = False
+    # Which models answered this turn, as "provider:model", when the client
+    # can fall back between several. Empty for a single fixed model.
+    models: list[str] = field(default_factory=list)
 
     @property
     def tools_used(self) -> list[str]:
@@ -329,6 +332,9 @@ class SophiaAgent:
 
         for _ in range(MAX_TOOL_ROUNDS):
             response = self._complete()
+            served_by = getattr(self.client, "served_by", None)
+            if isinstance(served_by, str) and served_by not in record.models:
+                record.models.append(served_by)
             message = response.choices[0].message
 
             if not getattr(message, "tool_calls", None):

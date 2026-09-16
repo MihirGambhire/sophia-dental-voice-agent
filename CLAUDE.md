@@ -191,8 +191,9 @@ data is missing, she takes a message.
 
 **Stack:** Python 3.11+, FastAPI, Pipecat with call audio over a
 WebSocket (WebRTC failed for remote callers, see the engineering log),
-Gemini `gemini-3.5-flash-lite` by default with Groq `openai/gpt-oss-120b`
-as a configurable alternative, Deepgram `nova-3` en-GB for speech to text
+Gemini `gemini-3.5-flash-lite` by default, falling back in order to
+`gemini-3-flash-preview`, `gemini-3.1-flash-lite` and Groq
+`openai/gpt-oss-120b` when a model is out of quota (`LLM_FALLBACKS`), Deepgram `nova-3` en-GB for speech to text
 and `aura-athena-en` for text to speech, SQLite, keyword retrieval over
 markdown (embeddings were dropped, the reason is in `requirements.txt`),
 pytest plus a live scenario suite in `evals/`.

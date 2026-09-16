@@ -161,6 +161,27 @@ class LLMSettings:
         default_factory=lambda: _env("GEMINI_MODEL", "gemini-3.5-flash-lite")
     )
 
+    # Models to fall back to, in order, when the one before is out of quota
+    # or unavailable, as "provider:model" pairs. Every Gemini model has its
+    # own free tier quota, so this is how a day of testing keeps working
+    # after the primary's 500 requests are gone.
+    #
+    # Probed with a real tool calling request on 16 September 2026:
+    #   gemini-3-flash-preview   right tool, 1.7s then 1.4s
+    #   gemini-3.1-flash-lite    right tool, 3.7s then 3.1s, one 503 in two tries
+    #   groq gpt-oss-120b        right tool, 0.6s, but stalls on its token
+    #                            per minute cap in a long call, so it goes last
+    # Rejected: gemini-3.5-flash (8 to 9s a request), gemma-4-31b-it (50s),
+    # gemini-3.8-flash (503 when tried), and gemini-2.5-flash and
+    # flash-lite, which the models endpoint lists and then answers 404.
+    # "none" means no fallback: the primary alone.
+    fallbacks: str = field(
+        default_factory=lambda: _env(
+            "LLM_FALLBACKS",
+            "gemini:gemini-3-flash-preview,gemini:gemini-3.1-flash-lite,groq:openai/gpt-oss-120b",
+        )
+    )
+
     @property
     def model(self) -> str:
         return self.gemini_model if self.provider == "gemini" else self.groq_model
@@ -168,6 +189,26 @@ class LLMSettings:
     @property
     def api_key(self) -> str:
         return self.gemini_api_key if self.provider == "gemini" else self.groq_api_key
+
+    def chain(self) -> list[tuple[str, str]]:
+        """
+        Every model Sophia may use, in order, as (provider, model) pairs.
+
+        The primary always comes first. A fallback is left out if it repeats
+        an earlier entry, names an unknown provider, or needs a key that is
+        not set, so a missing Groq key quietly shortens the chain rather
+        than failing a call halfway through it.
+        """
+        keys = {"gemini": self.gemini_api_key, "groq": self.groq_api_key}
+        chain = [(self.provider, self.model)]
+        if self.fallbacks.strip().lower() == "none":
+            return chain
+        for entry in self.fallbacks.split(","):
+            provider, _, model = entry.strip().partition(":")
+            pair = (provider.strip(), model.strip())
+            if pair[1] and keys.get(pair[0]) and pair not in chain:
+                chain.append(pair)
+        return chain
 
 
 @dataclass(frozen=True)

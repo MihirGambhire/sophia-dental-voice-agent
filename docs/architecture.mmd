@@ -10,7 +10,7 @@ flowchart TB
 
     subgraph Agent["Agent"]
         Safety[[Safety screen<br/>deterministic, before the model]]
-        LLM[Gemini flash-lite<br/>Groq gpt-oss as an alternative]
+        LLM[Gemini flash-lite<br/>falls back to other models<br/>when out of quota]
         Guards[[Reply guards<br/>false claims, medicine advice]]
     end
 

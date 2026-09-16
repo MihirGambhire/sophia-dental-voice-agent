@@ -789,6 +789,66 @@ not have. It cannot be argued out of it, and it cannot say it by accident.
 
 ---
 
+### 30. Falling back to other models, and what the fallbacks revealed
+
+**Problem.** With the daily quota gone, every caller heard an apology
+until the reset at midnight Pacific time. Adding keys from other accounts
+was considered and rejected: Google's API terms forbid circumventing
+usage limits, and a key rotation scheme in a public repo says the wrong
+thing about the person who wrote it. But each Gemini model has its own
+quota, so a list of models tried in order is within the rules.
+
+**Choosing the list.** Every candidate was sent the same real request:
+Sophia's prompt and tools, "what time do you open on Monday", then a tool
+result. Two models the models endpoint lists, gemini-2.5-flash and
+flash-lite, answered 404. gemma-4-31b-it took 50 seconds. gemini-3.8-flash
+returned 503. gemini-3-flash-preview and gemini-3.1-flash-lite both called
+the right tool and answered correctly, in 1.4 to 3.7 seconds a request.
+Groq was fastest at 0.6 seconds and goes last, for the reason below.
+
+**Design.** A daily quota moves to the next model at once and rests that
+model until the reset, because retrying only adds silence on the line. A
+per minute limit or a 503 rests it briefly. Resting is shared across
+calls, so only the first request finds out. A bad request is raised, not
+passed along, because trying another model would disguise a bug as a
+quota problem. The reset time is computed in UTC, for the same reason as
+entry 3.
+
+**Bug found live: Gemini could not take over from Groq.** With Groq first
+in the list, Groq hit its token per minute cap on turn two, Gemini
+rejected the conversation with a 400 for missing thought signatures, and
+the call ended. Groq's tool calls have no signatures, and Gemini refuses
+rebuilt function call parts without one. The older code assumed Gemini
+only objected once it had issued a signature, and a unit test encoded
+that assumption. Tool calls made by another provider are now described to
+Gemini as plain text, which carries no signature to check. The rerun
+switched between Groq and Gemini five times across two turns without an
+error. Switching between Gemini models needed nothing: Google documents
+that the backend handles thought signatures from a previous model.
+
+**What the fallbacks revealed.** Running a real call on them showed
+behaviour the primary had been hiding:
+
+- Turns took 9 to 33 seconds, against a median near 3 on the primary.
+- A fallback sent `funding: "private"` for an NHS patient who had said
+  nothing about paying, and quoted £50 for a £27.90 check up. Funding
+  decides the fee, and the fee is supposed to be decided in code. The tool
+  now ignores a funding override unless the caller's own words asked for
+  it, the same grounding used for postcodes in entry 23.
+- Asked for "something in the afternoon please", with one afternoon slot
+  on offer, a fallback booked it without asking. Nothing in code requires
+  an explicit yes before a booking, unlike a cancellation. Not changed
+  yet: a guard on words like "please" would not have caught this one, and
+  a confirmation step costs every caller an extra turn.
+
+**Lesson.** A stronger model covers for gaps in the rules around it. The
+funding gap existed from day two and no test or live call found it until
+a weaker model walked into it. Running the agent on a worse model is a
+cheap way to find where the code is trusting the model more than it says
+it does.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns

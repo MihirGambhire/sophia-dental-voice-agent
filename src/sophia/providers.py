@@ -17,8 +17,8 @@ sits in backoff and the caller hears nothing for the best part of a
 minute. That was measured, not guessed. See the engineering log.
 
 Gemini's free tier is far more generous on tokens, so it can carry a long
-tool heavy conversation without stalling. It is the safer choice for a
-live demo. Groq stays the default for latency when the budget allows.
+tool heavy conversation without stalling. It is the default. Groq is the
+last model in the fallback chain, further down this file.
 
 WHAT ACTUALLY DIFFERS
 =====================
@@ -37,8 +37,16 @@ Four things, all handled below:
 from __future__ import annotations
 
 import json
+import re
+import threading
+import time
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from datetime import time as dt_time
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
+
+from loguru import logger
 
 from . import config
 
@@ -153,11 +161,14 @@ def _to_gemini_contents(
 
     So an assistant turn that made tool calls is replayed verbatim from
     this cache rather than reconstructed from the OpenAI style message.
+    Tool calls with nothing cached were made by another provider, and are
+    described in text instead, see below.
     """
     from google.genai import types
 
     system_parts: list[str] = []
     contents = []
+    told_as_text: set[str] = set()
 
     for message in messages:
         role = message.get("role")
@@ -186,17 +197,20 @@ def _to_gemini_contents(
                     contents.append(original)
                     continue
 
+            # No signature for these calls, because Gemini did not make them:
+            # another provider in the fallback chain did. Rebuilt function
+            # call parts are rejected outright, which ended a live call when
+            # Groq ran out of tokens and Gemini could not take over. The
+            # signature check applies to function call parts only, so the
+            # calls and their results are told to Gemini as plain text.
             parts = []
             if message.get("content"):
                 parts.append(types.Part(text=message["content"]))
             for call in tool_calls:
-                try:
-                    arguments = json.loads(call["function"]["arguments"] or "{}")
-                except json.JSONDecodeError:
-                    arguments = {}
+                told_as_text.add(call["id"])
                 parts.append(
-                    types.Part.from_function_call(
-                        name=call["function"]["name"], args=arguments
+                    types.Part(
+                        text=f"(I called {call['function']['name']} with {call['function']['arguments'] or '{}'}.)"
                     )
                 )
             if parts:
@@ -205,6 +219,14 @@ def _to_gemini_contents(
 
         if role == "tool":
             name = message.get("name") or call_names.get(message.get("tool_call_id", ""), "tool")
+            if message.get("tool_call_id") in told_as_text:
+                contents.append(
+                    types.Content(
+                        role="user",
+                        parts=[types.Part(text=f"(Result of {name}: {message.get('content') or '{}'})")],
+                    )
+                )
+                continue
             try:
                 payload = json.loads(message.get("content") or "{}")
             except json.JSONDecodeError:
@@ -279,6 +301,10 @@ class _GeminiCompletions:
             except (errors.ServerError, errors.ClientError) as failure:
                 status = getattr(failure, "code", None)
                 retryable = isinstance(failure, errors.ServerError) or status == 429
+                # A daily quota is also a 429, and no wait short of the
+                # daily reset helps. Retrying only makes the caller wait.
+                if is_daily_quota(failure):
+                    retryable = False
                 if not retryable or delay is None:
                     raise
                 time.sleep(delay)
@@ -346,18 +372,286 @@ class GeminiClient:
 
 
 # ---------------------------------------------------------------------------
+# Falling back when a model is out of quota or unavailable
+# ---------------------------------------------------------------------------
+#
+# WHY
+# ===
+# The Gemini free tier allows 500 requests a day per model. A day of phone
+# testing plus one full evaluation used all of them, and from then until
+# the reset every caller heard an apology. Each model has its own quota,
+# so the answer is a list of models tried in order, not more accounts:
+# spreading one app across accounts to get round a limit is against the
+# API terms, and is not something to put in a public repo.
+#
+# The rules are about what a caller on the line experiences:
+#   - a daily quota moves on immediately and rests that model until the
+#     reset, because retrying it only adds silence
+#   - a per minute limit or a 503 rests the model briefly and moves on
+#   - once a model is resting, every call skips it without asking again,
+#     so only the first unlucky request pays for finding out
+#   - anything that looks like a bug, a bad request, is raised as before,
+#     because silently trying another model would hide it
+
+
+# Seconds a model is left alone after each kind of failure.
+REST_AFTER_OVERLOAD_SECS = 30.0
+REST_AFTER_RATE_LIMIT_SECS = 60.0
+REST_AFTER_NETWORK_SECS = 15.0
+REST_WHEN_UNAVAILABLE_SECS = 3600.0
+
+_NETWORK_FAILURES = {
+    "ConnectError", "ConnectTimeout", "ReadTimeout", "WriteTimeout", "PoolTimeout",
+    "RemoteProtocolError", "TimeoutException", "APIConnectionError", "APITimeoutError",
+}
+
+
+def _status_of(failure) -> int | None:
+    """The HTTP status, whichever SDK raised it. Gemini says code, Groq status_code."""
+    for name in ("code", "status_code"):
+        value = getattr(failure, name, None)
+        if isinstance(value, int):
+            return value
+    return None
+
+
+def is_daily_quota(failure) -> bool:
+    """
+    True for a 429 that is a per day limit rather than a per minute one.
+
+    They arrive as the same status. Gemini names the quota in the body,
+    GenerateRequestsPerDayPerProjectPerModel-FreeTier, and Groq says
+    "per day" in its message. Only this tells them apart.
+    """
+    text = str(failure)
+    return _status_of(failure) == 429 and ("PerDay" in text or "per day" in text.lower())
+
+
+def seconds_until_gemini_reset(now: datetime | None = None) -> float:
+    """
+    Seconds until Gemini's daily quotas reset, at midnight Pacific time.
+
+    Both ends are converted to UTC before subtracting. Python subtracts two
+    datetimes that share a tzinfo as wall clock times, which is the British
+    Summer Time bug in the engineering log; on the night the clocks change,
+    this would be an hour out.
+    """
+    pacific = ZoneInfo("America/Los_Angeles")
+    now = (now or datetime.now(timezone.utc)).astimezone(pacific)
+    reset = datetime.combine(now.date() + timedelta(days=1), dt_time(0), tzinfo=pacific)
+    elapsed = reset.astimezone(timezone.utc) - now.astimezone(timezone.utc)
+    return max(60.0, elapsed.total_seconds())
+
+
+def _suggested_wait(failure) -> float | None:
+    """The wait the provider asked for, if it said."""
+    match = re.search(r"retryDelay['\"]?:\s*['\"]?(\d+(?:\.\d+)?)s", str(failure))
+    if match:
+        return float(match.group(1))
+    response = getattr(failure, "response", None)
+    headers = getattr(response, "headers", None) or {}
+    try:
+        return float(headers.get("retry-after")) if headers.get("retry-after") else None
+    except (TypeError, ValueError):
+        return None
+
+
+@dataclass
+class Verdict:
+    """What to do about one failed request."""
+
+    move_on: bool
+    rest_seconds: float = 0.0
+    reason: str = ""
+
+
+def judge_failure(failure, provider: str) -> Verdict:
+    """Decide whether a failure is the model's problem or the request's."""
+    status = _status_of(failure)
+    name = type(failure).__name__
+    text = str(failure)
+
+    if status == 429:
+        if is_daily_quota(failure):
+            wait = seconds_until_gemini_reset() if provider == "gemini" else REST_WHEN_UNAVAILABLE_SECS
+            return Verdict(True, wait, "429 daily quota used up")
+        return Verdict(True, _suggested_wait(failure) or REST_AFTER_RATE_LIMIT_SECS, "429 rate limited")
+    if (status is not None and status >= 500) or name in ("ServerError", "InternalServerError"):
+        return Verdict(True, REST_AFTER_OVERLOAD_SECS, f"{status or 503} overloaded")
+    if name in _NETWORK_FAILURES:
+        return Verdict(True, REST_AFTER_NETWORK_SECS, "network error")
+    if status == 400 and "thought_signature" in text:
+        # A rejected thought signature. Another provider's tool calls are
+        # now sent as text so this should not happen, but if it does the
+        # model itself is fine: skip it for this request, do not rest it.
+        return Verdict(True, 0.0, "cannot continue another provider's tool calls")
+    if status in (401, 403, 404):
+        return Verdict(True, REST_WHEN_UNAVAILABLE_SECS, f"{status} unavailable to this key")
+    return Verdict(False)
+
+
+class ModelHealth:
+    """
+    Which models are resting, shared by every call in the process.
+
+    Shared so that when one caller finds a model out of quota, the next
+    caller does not pay for finding out again.
+    """
+
+    def __init__(self, clock=time.monotonic):
+        self._clock = clock
+        self._resting: dict[str, tuple[float, str]] = {}
+        self._lock = threading.Lock()
+
+    def rest(self, label: str, seconds: float, reason: str) -> None:
+        if seconds <= 0:
+            return
+        with self._lock:
+            self._resting[label] = (self._clock() + seconds, reason)
+
+    def why_resting(self, label: str) -> str | None:
+        """None if the model is available, otherwise why it is not."""
+        with self._lock:
+            entry = self._resting.get(label)
+            if entry is None:
+                return None
+            until, reason = entry
+            remaining = until - self._clock()
+            if remaining <= 0:
+                del self._resting[label]
+                return None
+            return f"{reason}, back in {remaining:.0f}s"
+
+    def snapshot(self) -> dict[str, str]:
+        with self._lock:
+            labels = list(self._resting)
+        return {label: why for label in labels if (why := self.why_resting(label))}
+
+    def clear(self) -> None:
+        with self._lock:
+            self._resting.clear()
+
+
+HEALTH = ModelHealth()
+
+
+class ModelsUnavailable(ProviderError):
+    """Every model in the chain failed or is resting."""
+
+    def __init__(self, reasons: list[tuple[str, str]]):
+        self.reasons = reasons
+        detail = "; ".join(f"{label}: {why}" for label, why in reasons)
+        # Worded so the eval runner's quota checks still read it: a 429,
+        # and PerDay only when every model is out for the day.
+        all_daily = bool(reasons) and all("daily quota" in why for _, why in reasons)
+        kind = "PerDay, every model is out for the day" if all_daily else "try again shortly"
+        super().__init__(f"429 RESOURCE_EXHAUSTED ({kind}). No model available: {detail}")
+
+
+class FallbackClient:
+    """
+    Tries each model in the chain until one answers.
+
+    Presents the same chat.completions.create() as a single client, so the
+    agent does not know it exists. One client per provider is kept for the
+    whole call, which matters for Gemini: its cache of model turns, with
+    their thought signatures, is shared by every Gemini model in the chain.
+    Google documents that when switching models within a session, the
+    previous model's thought blocks are resent and the backend manages
+    compatibility.
+    """
+
+    def __init__(self, chain: list[tuple[str, str]], health: ModelHealth | None = None, factory=None):
+        if not chain:
+            raise ProviderError("The model chain is empty.")
+        self.chain = list(chain)
+        self.health = health or HEALTH
+        self._factory = factory or self._build_for_chain
+        self._clients: dict[str, object] = {}
+        # Which model answered the most recent request, as "provider:model".
+        self.served_by: str | None = None
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+    def _build_for_chain(self, provider: str):
+        """
+        A client that fails fast, because there is somewhere else to go.
+
+        The SDKs' own retries are what made Groq stall for a minute, and on
+        a live call moving to the next model is quicker than waiting.
+        """
+        client = build_single_client(provider)
+        if provider == "gemini":
+            client.chat.completions.RETRY_DELAYS_SECS = ()
+        elif provider == "groq":
+            client = client.with_options(max_retries=0)
+        return client
+
+    def _client(self, provider: str):
+        if provider not in self._clients:
+            self._clients[provider] = self._factory(provider)
+        return self._clients[provider]
+
+    def create(self, **request):
+        reasons: list[tuple[str, str]] = []
+        for provider, model in self.chain:
+            label = f"{provider}:{model}"
+            resting = self.health.why_resting(label)
+            if resting:
+                reasons.append((label, resting))
+                continue
+
+            attempt = dict(request, model=model)
+            if provider == "groq" and config.LLM.reasoning_effort:
+                attempt["reasoning_effort"] = config.LLM.reasoning_effort
+            else:
+                attempt.pop("reasoning_effort", None)
+
+            try:
+                response = self._client(provider).chat.completions.create(**attempt)
+            except Exception as failure:  # noqa: BLE001, judged just below
+                verdict = judge_failure(failure, provider)
+                if not verdict.move_on:
+                    raise
+                self.health.rest(label, verdict.rest_seconds, verdict.reason)
+                reasons.append((label, verdict.reason))
+                logger.warning(f"Model {label} failed ({verdict.reason}), trying the next one")
+                continue
+
+            if self.served_by and self.served_by != label:
+                logger.info(f"Now answering with {label}")
+            self.served_by = label
+            return response
+
+        raise ModelsUnavailable(reasons)
+
+
+# ---------------------------------------------------------------------------
 # Choosing one
 # ---------------------------------------------------------------------------
 
 
 def build_client(provider: str | None = None):
     """
-    Build the client for the configured provider.
+    Build the client Sophia talks through.
+
+    With fallbacks configured, a FallbackClient over the whole chain.
+    Naming a provider asks for that provider alone, with no fallback.
+    """
+    if provider is None:
+        chain = config.LLM.chain()
+        if len(chain) > 1:
+            build_single_client(config.LLM.provider)  # fail now on a missing primary key
+            return FallbackClient(chain)
+    return build_single_client(provider or config.LLM.provider)
+
+
+def build_single_client(provider: str):
+    """
+    Build the client for one provider.
 
     Errors here say what to do about them, because the most common cause
     is a missing key and the least helpful response is a stack trace.
     """
-    provider = provider or config.LLM.provider
 
     if provider == "gemini":
         if not config.LLM.gemini_api_key:

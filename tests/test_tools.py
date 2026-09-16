@@ -235,6 +235,35 @@ def test_an_nhs_patient_is_quoted_the_band_one_charge(conn):
     assert result["fee"] == "£27.90"
 
 
+def test_the_model_cannot_switch_an_nhs_patient_to_private_on_its_own(conn):
+    """
+    A fallback model sent funding="private" for an NHS patient who never
+    mentioned paying privately, and quoted £50 instead of £27.90.
+    """
+    session, _ = verified(conn, "hollis")
+    session.caller_heard = ["I'd like to book a check up please."]
+    result = session.recommend_appointment_type("check_up", funding="private")
+
+    assert result["appointment_type"] == "NHS_EXAM"
+    assert result["fee"] == "£27.90"
+
+
+def test_a_caller_who_asks_to_go_private_can(conn):
+    session, _ = verified(conn, "hollis")
+    session.caller_heard = ["Could I see someone privately instead? I don't mind paying."]
+    result = session.recommend_appointment_type("check_up", funding="private")
+
+    assert result["appointment_type"].startswith("PRIV_")
+
+
+def test_a_caller_asking_for_the_nhs_is_heard_in_spoken_forms(conn):
+    session, _ = verified(conn, "okafor")
+    session.caller_heard = ["Can I have that on the N H S?"]
+    result = session.recommend_appointment_type("check_up", funding="nhs")
+
+    assert result["appointment_type"] == "NHS_EXAM"
+
+
 def test_a_lapsed_patient_asking_for_hygiene_gets_direct_access(conn):
     session, _ = verified(conn, "pritchard")
     result = session.recommend_appointment_type("hygiene", funding="private", minutes=30)

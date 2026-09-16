@@ -142,7 +142,7 @@ flowchart TB
 
     subgraph Agent["Agent"]
         Safety[[Safety screen<br/>deterministic, before the model]]
-        LLM[Gemini flash-lite<br/>Groq gpt-oss as an alternative]
+        LLM[Gemini flash-lite<br/>falls back to other models<br/>when out of quota]
         Guards[[Reply guards<br/>false claims, medicine advice]]
     end
 
@@ -283,7 +283,7 @@ Windows has no system timezone database.
 | Piece | Choice | Reason |
 |---|---|---|
 | Language model | Gemini `gemini-3.5-flash-lite` | Free tier, tool calling intact, under a second per request when measured |
-| Alternative model | Groq `openai/gpt-oss-120b` | Faster per request, but its free tier caps tokens per minute and stalled real conversations for up to a minute |
+| Fallback models | `gemini-3-flash-preview`, `gemini-3.1-flash-lite`, then Groq `openai/gpt-oss-120b` | Tried in order when a model is out of quota or overloaded. Each Gemini model has its own daily quota. They keep a call going, but are slower and make more mistakes, so they are a backstop rather than an equal |
 | Speech to text | Deepgram `nova-3`, en-GB | UK English matters for postcodes, surnames and "twenty past nine" |
 | Text to speech | Deepgram `aura-athena-en` | British, calm and professional, chosen by listening |
 | Voice pipeline | Pipecat, audio over a WebSocket | Open source, and no phone number means no cost |
@@ -391,8 +391,12 @@ limits of the demo, written down rather than hidden.
 - **Free tier limits.** Gemini's free tier allows 15 requests a minute and
   500 a day per model, and one caller turn with tool calls can be several
   requests. A few simultaneous callers can reach the first; a day of
-  testing plus a full evaluation reached the second. Requests are retried
-  briefly, but both are real ceilings.
+  testing plus a full evaluation reached the second. When that happens
+  Sophia moves to the next model in a fallback list, so calls keep
+  working, but measurably worse. In live tests, turns that take about 3
+  seconds on the primary took 9 to 33, and a call on the fallbacks booked a
+  slot the caller had not clearly chosen. The evaluation suite measures
+  the primary alone unless run with `--fallback`.
 - **No real telephony.** Calls run in a browser. A real phone number costs
   money and proves nothing extra in a demo.
 - **One shared demo database.** Everyone testing at once shares the same

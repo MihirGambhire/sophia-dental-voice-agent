@@ -12,6 +12,7 @@ behind any claim about how well Sophia behaves.
 """
 
 import argparse
+import dataclasses
 import sys
 import time
 from pathlib import Path
@@ -38,7 +39,15 @@ def main() -> None:
     parser.add_argument("--turn-pause", type=float, default=5.0, help="seconds between turns")
     parser.add_argument("--rate-limit-retries", type=int, default=3)
     parser.add_argument("--out", default=str(ROOT / "docs" / "EVAL_RESULTS.md"))
+    # Off by default: the suite should measure one model, not whichever
+    # mix of models happened to have quota left. The report lists the
+    # models used when fallback is turned on.
+    parser.add_argument("--fallback", action="store_true",
+                        help="allow the model fallback chain, as the live demo does")
     args = parser.parse_args()
+
+    if not args.fallback:
+        config.LLM = dataclasses.replace(config.LLM, fallbacks="none")
 
     if args.list:
         for scenario in SCENARIOS:
@@ -54,8 +63,8 @@ def main() -> None:
             sys.exit(2)
         chosen = [lookup[name] for name in args.only.split(",")]
 
-    print(f"\nRunning {len(chosen)} scenario(s) x {args.repeat} against "
-          f"{config.LLM.model} via {config.LLM.provider}\n")
+    models = ", then ".join(f"{model} via {provider}" for provider, model in config.LLM.chain())
+    print(f"\nRunning {len(chosen)} scenario(s) x {args.repeat} against {models}\n")
 
     results = []
     started = time.time()

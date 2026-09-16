@@ -581,3 +581,24 @@ def test_an_interrupted_reply_is_marked_in_the_history(conn):
 
     assert "interrupted" in agent.messages[-1]["content"]
     assert agent.messages[-1]["content"].startswith("The fee is twenty seven pounds ninety.")
+
+
+def test_each_turn_records_which_model_answered(conn):
+    """With a fallback chain, the eval report needs to know who answered."""
+    client = FakeClient([tool_response([("search_practice_info", {"question": "hours"})]), text_response("Eight till six.")])
+    served = iter(["gemini:primary", "gemini:backup"])
+    original = client._create
+
+    def create(**kwargs):
+        client.served_by = next(served)
+        return original(**kwargs)
+
+    client.chat.completions.create = create
+    agent = SophiaAgent(conn, now=a_weekday_at(10), client=client)
+    record = agent.say("What are your opening hours?")
+    assert record.models == ["gemini:primary", "gemini:backup"]
+
+
+def test_a_single_fixed_model_records_nothing(conn):
+    record = agent_with(conn, [text_response("Hello.")]).say("Hello")
+    assert record.models == []

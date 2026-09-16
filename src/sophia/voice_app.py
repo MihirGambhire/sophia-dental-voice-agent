@@ -67,7 +67,7 @@ from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketTransport,
 )
 
-from . import config, db, outbound, prompts, web_audio
+from . import config, db, outbound, prompts, providers, web_audio
 from .agent_text import SophiaAgent
 
 
@@ -512,6 +512,8 @@ def create_app() -> FastAPI:
             "disclaimer": config.DISCLAIMER,
             "provider": config.LLM.provider,
             "model": config.LLM.model,
+            "model_chain": [f"{provider}:{model}" for provider, model in config.LLM.chain()],
+            "models_resting": providers.HEALTH.snapshot(),
             "voice": config.SPEECH.tts_voice,
             "speech_configured": bool(config.SPEECH.deepgram_api_key),
             "turn_configured": config.turn_configured(),

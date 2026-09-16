@@ -8,6 +8,8 @@ the call succeeds, the model simply never sees what you meant to send.
 """
 
 import json
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +17,10 @@ import pytest
 from sophia import providers
 from sophia.providers import ProviderError
 from sophia.schemas import TOOL_SCHEMAS
+
+# The quota tests check the error wording against the eval runner's own
+# checks, which live outside src.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +112,8 @@ def test_assistant_becomes_model():
 
 
 def test_a_tool_result_becomes_a_function_response():
+    """For a call Gemini made itself, so its turn is in the replay cache."""
+    original = SimpleNamespace(role="model", parts=["gemini's own call"])
     _, contents = translate(
         [
             {
@@ -125,7 +133,8 @@ def test_a_tool_result_becomes_a_function_response():
                 "name": "get_fee",
                 "content": json.dumps({"fee": "£27.90"}),
             },
-        ]
+        ],
+        model_turns={"c1": original},
     )
     last = contents[-1]
     assert last.parts[0].function_response is not None
@@ -177,23 +186,35 @@ def test_a_remembered_model_turn_is_replayed_verbatim():
     assert contents[0] is original
 
 
-def test_without_a_remembered_turn_it_falls_back_to_rebuilding():
+def test_another_providers_tool_calls_are_told_as_text():
     """
-    A first request, or a conversation resumed from nothing, has no cache.
-    Rebuilding is better than failing, and Gemini only objects once a
-    signature has been issued.
+    Tool calls with nothing in the cache were made by another model in the
+    fallback chain. This used to rebuild them as function call parts, on
+    the belief that Gemini only objects once it has issued a signature. A
+    live call proved otherwise: Groq ran out of tokens on turn two,
+    Gemini rejected the rebuilt calls with a 400, and the call ended.
+    Text parts carry no signature to check.
     """
-    assistant = {
-        "role": "assistant",
-        "content": None,
-        "tool_calls": [
-            {"id": "c1", "type": "function", "function": {"name": "get_fee", "arguments": "{}"}}
+    _, contents = translate(
+        [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {"id": "g1", "type": "function", "function": {"name": "verify_patient", "arguments": '{"full_name": "Margaret Hollis"}'}}
+                ],
+            },
+            {"role": "tool", "tool_call_id": "g1", "name": "verify_patient", "content": '{"verified": true}'},
         ],
-    }
-    _, contents = translate([assistant], model_turns={})
+        model_turns={},
+    )
 
     assert contents[0].role == "model"
-    assert contents[0].parts[0].function_call.name == "get_fee"
+    assert contents[0].parts[0].function_call is None
+    assert "verify_patient" in contents[0].parts[0].text and "Margaret Hollis" in contents[0].parts[0].text
+    assert contents[1].role == "user"
+    assert contents[1].parts[0].function_response is None
+    assert '"verified": true' in contents[1].parts[0].text
 
 
 def test_malformed_tool_arguments_do_not_break_translation():
@@ -205,7 +226,7 @@ def test_malformed_tool_arguments_do_not_break_translation():
         ],
     }
     _, contents = translate([assistant], model_turns={})
-    assert contents[0].parts[0].function_call.args == {}
+    assert "get_fee" in contents[0].parts[0].text
 
 
 # ---------------------------------------------------------------------------
@@ -335,3 +356,194 @@ def test_api_keys_never_appear_in_a_repr():
     ):
         if secret:
             assert secret not in text, "an API key is exposed in a repr"
+
+
+# ---------------------------------------------------------------------------
+# Falling back between models
+# ---------------------------------------------------------------------------
+
+
+class FakeApiError(Exception):
+    """Shaped like the SDK errors: a status on .code, the body in the message."""
+
+    def __init__(self, code, message=""):
+        super().__init__(f"{code} {message}")
+        self.code = code
+
+
+class ServerError(FakeApiError):
+    """Named like google.genai.errors.ServerError, which is matched by name."""
+
+
+DAILY = FakeApiError(429, "RESOURCE_EXHAUSTED {'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier'}")
+PER_MINUTE = FakeApiError(429, "RESOURCE_EXHAUSTED {'quotaId': 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier', 'retryDelay': '31s'}")
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+class ScriptedProvider:
+    """A provider whose models fail or answer as scripted, recording every request."""
+
+    def __init__(self, outcomes):
+        self.outcomes = outcomes  # model -> exception, or a reply string
+        self.requests = []
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+    def create(self, **request):
+        self.requests.append(request)
+        outcome = self.outcomes[request["model"]]
+        if isinstance(outcome, Exception):
+            raise outcome
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=outcome, tool_calls=None))])
+
+
+def chain_client(outcomes_by_provider, chain, clock=None):
+    fakes = {name: ScriptedProvider(outcomes) for name, outcomes in outcomes_by_provider.items()}
+    health = providers.ModelHealth(clock=clock or FakeClock())
+    client = providers.FallbackClient(chain, health=health, factory=lambda name: fakes[name])
+    return client, fakes, health
+
+
+CHAIN = [("gemini", "primary"), ("gemini", "backup"), ("groq", "last")]
+
+
+def ask(client):
+    return client.chat.completions.create(model="ignored", messages=[], reasoning_effort="low")
+
+
+def test_a_healthy_primary_answers_and_nothing_else_is_asked():
+    client, fakes, _ = chain_client({"gemini": {"primary": "hello", "backup": "no"}, "groq": {}}, CHAIN)
+    assert ask(client).choices[0].message.content == "hello"
+    assert [r["model"] for r in fakes["gemini"].requests] == ["primary"]
+    assert client.served_by == "gemini:primary"
+
+
+def test_a_daily_quota_moves_on_and_is_not_asked_again():
+    """The first unlucky request finds out. Every later one goes straight past."""
+    client, fakes, health = chain_client({"gemini": {"primary": DAILY, "backup": "hi"}, "groq": {}}, CHAIN)
+    assert ask(client).choices[0].message.content == "hi"
+    assert ask(client).choices[0].message.content == "hi"
+    assert [r["model"] for r in fakes["gemini"].requests] == ["primary", "backup", "backup"]
+    assert "daily quota" in health.why_resting("gemini:primary")
+    assert client.served_by == "gemini:backup"
+
+
+def test_a_per_minute_limit_rests_the_model_only_as_long_as_asked():
+    clock = FakeClock()
+    outcomes = {"gemini": {"primary": PER_MINUTE, "backup": "hi"}, "groq": {}}
+    client, fakes, health = chain_client(outcomes, CHAIN, clock=clock)
+    ask(client)
+    assert health.why_resting("gemini:primary")
+
+    clock.now += 32
+    fakes["gemini"].outcomes["primary"] = "back"
+    assert ask(client).choices[0].message.content == "back"
+
+
+def test_an_overloaded_model_is_rested_briefly():
+    client, _, health = chain_client(
+        {"gemini": {"primary": ServerError(503, "UNAVAILABLE"), "backup": "hi"}, "groq": {}}, CHAIN
+    )
+    ask(client)
+    assert "overloaded" in health.why_resting("gemini:primary")
+
+
+def test_a_bad_request_is_raised_not_hidden_behind_another_model():
+    """Trying the next model would make a real bug look like a quota problem."""
+    client, fakes, _ = chain_client(
+        {"gemini": {"primary": FakeApiError(400, "INVALID_ARGUMENT"), "backup": "hi"}, "groq": {}}, CHAIN
+    )
+    with pytest.raises(FakeApiError):
+        ask(client)
+    assert [r["model"] for r in fakes["gemini"].requests] == ["primary"]
+
+
+def test_a_missing_thought_signature_skips_the_model_without_resting_it():
+    """
+    After Groq has answered with tool calls, Gemini cannot continue that
+    call. That says nothing about Gemini for any other caller.
+    """
+    signature = FakeApiError(400, "Function call is missing a thought_signature in functionCall parts")
+    client, _, health = chain_client({"gemini": {"primary": signature, "backup": signature}, "groq": {"last": "ok"}}, CHAIN)
+    assert ask(client).choices[0].message.content == "ok"
+    assert health.why_resting("gemini:primary") is None
+
+
+def test_reasoning_effort_only_reaches_groq():
+    """Groq needs it to protect its token cap; Gemini does not take it."""
+    client, fakes, _ = chain_client({"gemini": {"primary": DAILY, "backup": DAILY}, "groq": {"last": "ok"}}, CHAIN)
+    ask(client)
+    assert all("reasoning_effort" not in r for r in fakes["gemini"].requests)
+    assert "reasoning_effort" in fakes["groq"].requests[0]
+
+
+def test_when_every_model_is_out_for_the_day_the_error_says_so():
+    """Worded so the eval runner stops instead of retrying for hours."""
+    client, _, _ = chain_client({"gemini": {"primary": DAILY, "backup": DAILY}, "groq": {"last": DAILY}}, CHAIN)
+    with pytest.raises(providers.ModelsUnavailable) as raised:
+        ask(client)
+    from evals.framework import is_daily_quota
+
+    assert is_daily_quota(str(raised.value))
+
+
+def test_a_mix_of_failures_is_not_reported_as_a_daily_limit():
+    client, _, _ = chain_client(
+        {"gemini": {"primary": DAILY, "backup": ServerError(503, "UNAVAILABLE")}, "groq": {"last": DAILY}}, CHAIN
+    )
+    with pytest.raises(providers.ModelsUnavailable) as raised:
+        ask(client)
+    from evals.framework import is_daily_quota, is_rate_limited
+
+    assert is_rate_limited(str(raised.value))
+    assert not is_daily_quota(str(raised.value))
+
+
+def test_the_daily_reset_is_midnight_pacific_across_a_clock_change():
+    """
+    3 November 2024: US clocks went back an hour at 2am Pacific. From 8pm
+    UTC on the 2nd, 1pm PDT, to midnight is an ordinary 11 hours. From just
+    after midnight on the 3rd to the next midnight is 25 hours, because
+    that day had an extra hour. Wall clock subtraction would say 24.
+    """
+    from datetime import datetime, timezone
+
+    assert providers.seconds_until_gemini_reset(datetime(2024, 11, 2, 20, 0, tzinfo=timezone.utc)) == 11 * 3600
+    assert providers.seconds_until_gemini_reset(datetime(2024, 11, 3, 7, 0, 1, tzinfo=timezone.utc)) == 25 * 3600 - 1
+
+
+def test_the_chain_starts_with_the_primary_and_skips_what_it_cannot_use(monkeypatch):
+    from sophia.config import LLMSettings
+
+    settings = LLMSettings(
+        provider="gemini", gemini_model="a", gemini_api_key="g", groq_api_key="",
+        fallbacks="gemini:a, gemini:b ,groq:c,mystery:d,gemini:",
+    )
+    assert settings.chain() == [("gemini", "a"), ("gemini", "b")]
+    assert LLMSettings(provider="gemini", gemini_model="a", gemini_api_key="g", fallbacks="none").chain() == [("gemini", "a")]
+
+
+def test_the_gemini_adapter_does_not_retry_a_daily_quota(monkeypatch):
+    """Retrying cannot help before the reset. It only leaves a caller in silence."""
+    from google.genai import errors
+
+    daily = errors.ClientError(429, {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "message": "quota",
+                                               "details": [{"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]}})
+    attempts = []
+
+    def generate_content(**request):
+        attempts.append(request)
+        raise daily
+
+    fake = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    completions = providers._GeminiCompletions(fake)
+    monkeypatch.setattr("time.sleep", lambda seconds: pytest.fail("slept before failing a daily quota"))
+    with pytest.raises(errors.ClientError):
+        completions._generate_with_retry(model="m", contents=[], config=None)
+    assert len(attempts) == 1

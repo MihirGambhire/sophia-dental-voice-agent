@@ -393,6 +393,20 @@ def write_report(results: list[RunResult], path: Path, provider: str, model: str
     ]
     corrections = sum(1 for result in results for turn in result.turns if turn.corrected_claim)
 
+    # With a fallback chain, a run may be answered by more than one model,
+    # and a pass rate that silently mixes models would misstate what was
+    # measured. So the share of turns each model answered is reported.
+    served: dict[str, int] = {}
+    for result in results:
+        for turn in result.turns:
+            for label in turn.models:
+                served[label] = served.get(label, 0) + 1
+    served_total = sum(served.values())
+    served_lines = [
+        f"| Turns answered by {label} | {count} of {served_total} |"
+        for label, count in sorted(served.items(), key=lambda item: -item[1])
+    ] if len(served) > 1 else []
+
     layer_counts: dict[str, int] = {}
     for check in all_checks:
         if not check.passed:
@@ -418,6 +432,7 @@ def write_report(results: list[RunResult], path: Path, provider: str, model: str
         f"| Agent turn latency, median | {statistics.median(latencies) if latencies else 0:.2f}s |",
         f"| Agent turn latency, p90 | {percentile(latencies, 0.9):.2f}s |",
         f"| False claims caught before the caller heard them | {corrections} |",
+        *served_lines,
         "",
         *(
             [

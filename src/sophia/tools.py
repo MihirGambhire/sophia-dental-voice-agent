@@ -219,6 +219,18 @@ def _postcode_was_said(postcode: str, utterances: list[str]) -> bool:
     return False
 
 
+_FUNDING_WORDS = {
+    "private": re.compile(r"\bprivate(ly)?\b|\bpay (for it )?myself\b", re.IGNORECASE),
+    "nhs": re.compile(r"\bn\.?\s?h\.?\s?s\b", re.IGNORECASE),
+}
+
+
+def _funding_was_asked_for(funding: str, utterances: list[str]) -> bool:
+    """True if the caller said anything asking for this kind of funding."""
+    pattern = _FUNDING_WORDS.get(funding)
+    return bool(pattern) and any(pattern.search(said or "") for said in utterances)
+
+
 class SophiaTools:
     """
     One conversation's worth of tool access.
@@ -1115,6 +1127,17 @@ class SophiaTools:
         patient_id = self._require_verified()
         patient = self._patient_row(patient_id)
         facts = PatientFacts.from_row(patient)
+        # Funding decides the fee, so the model does not get to choose it.
+        # A fallback model once sent "private" for an NHS patient who had
+        # said nothing about paying privately, and quoted £50 for a £27.90
+        # check up. An override now counts only if the caller asked for it.
+        if (
+            funding
+            and funding != patient["patient_type"]
+            and self.caller_heard is not None
+            and not _funding_was_asked_for(funding, self.caller_heard)
+        ):
+            funding = None
         funding = funding or patient["patient_type"]
         today = self.now.date()
 
