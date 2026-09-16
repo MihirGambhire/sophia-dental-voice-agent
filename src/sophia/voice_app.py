@@ -187,16 +187,66 @@ class Offer(BaseModel):
     type: str
 
 
+def _turn_preference(url: str) -> int:
+    """
+    Sort key putting TURN over TCP and TLS ahead of TURN over UDP.
+
+    aiortc only ever uses the FIRST turn: URL it finds, unlike a browser,
+    which tries them all. Metered list plain UDP on port 80 first. On the
+    office network this was developed on, outbound UDP to the relay is
+    blocked, so every allocation silently timed out after five seconds and
+    the server never had a relay address of its own. Probed directly:
+
+        turn  :80   udp   no relay, 5.0s timeout
+        turn  :80   tcp   relay in 0.1s
+        turn  :443  udp   no relay, 5.0s timeout
+        turns :443  tcp   relay in 0.1s
+
+    TLS on 443 goes first because it looks like ordinary HTTPS and survives
+    the most restrictive firewalls. It costs a little latency on open
+    networks, which is a fair price for the call connecting at all.
+    """
+    if url.startswith("turns:"):
+        return 0
+    if url.startswith("turn:") and "transport=tcp" in url:
+        return 1
+    if url.startswith("turn:"):
+        return 2
+    return 3
+
+
 def _aiortc_ice_servers() -> list[RTCIceServer]:
-    """The same ICE list as the browser gets, in aiortc's shape."""
-    servers = []
+    """
+    The same ICE list as the browser gets, in aiortc's shape and order.
+
+    STUN entries are kept as they are. All TURN URLs that share credentials
+    are merged into one entry sorted by _turn_preference, because aiortc
+    picks the first TURN URL across the whole list.
+    """
+    stun: list[RTCIceServer] = []
+    turn_urls: list[str] = []
+    username = credential = None
+
     for entry in config.ice_servers():
-        servers.append(
+        urls = entry["urls"]
+        urls = [urls] if isinstance(urls, str) else list(urls)
+        relay = [url for url in urls if url.startswith(("turn:", "turns:"))]
+        if relay:
+            turn_urls.extend(relay)
+            username = username or entry.get("username")
+            credential = credential or entry.get("credential")
+        else:
+            stun.append(RTCIceServer(urls=urls))
+
+    servers = list(stun)
+    if turn_urls:
+        servers.insert(
+            0,
             RTCIceServer(
-                urls=entry["urls"],
-                username=entry.get("username"),
-                credential=entry.get("credential"),
-            )
+                urls=sorted(dict.fromkeys(turn_urls), key=_turn_preference),
+                username=username,
+                credential=credential,
+            ),
         )
     return servers
 
