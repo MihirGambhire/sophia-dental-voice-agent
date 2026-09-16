@@ -446,6 +446,45 @@ passes and means nothing.
 
 ---
 
+### 19. The voice was American
+
+**Symptom.** None. Nothing failed. The Day 1 config named
+`aura-2-thalia-en` as the text to speech voice, which was a placeholder
+written from memory, and nothing in the project would ever have objected.
+
+**Cause.** Thalia is an American voice. A demo about a Warrington dental
+practice, built carefully around UK dates, UK postcodes, NHS bands and
+British English phrasing, would have opened its mouth and sounded like
+somebody in California.
+
+**Fix.** Queried the Deepgram models endpoint. It lists four British
+voices. `aura-2-pandora-en` is the newer generation and reads calm and
+smooth, which suits someone who has to talk to people in pain.
+
+**Lesson.** The bugs that cost you the room are not always the ones that
+raise an exception. This one would have been noticed by the interviewer
+in the first three seconds of the demo video, and by nobody before that.
+
+---
+
+### 20. A test helper patched the wrong kind of method
+
+**Symptom.** Twelve voice tests failing with `noop() takes 2 positional
+arguments but 3 were given`.
+
+**Cause.** The helper stubbed the parent class's `process_frame` to skip
+pipeline bookkeeping. Patching a method on the class replaces an unbound
+function, so the stub also receives `self`. The stub only accepted two
+arguments.
+
+**Fix.** Give the stub a `self` parameter.
+
+**Lesson.** Small, but a good reminder that the instinct on a wall of red
+is to doubt the code under test. Here the code was fine and the scaffolding
+was wrong, which is the third time that has happened in this log.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns

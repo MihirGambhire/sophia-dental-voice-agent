@@ -12,7 +12,7 @@ takes a message when she cannot help.
 She runs entirely on free tiers and open source. Total cost to build and
 run: nothing.
 
-**Status: in progress.** Day 3 of an 8 day build. See [Progress](#progress).
+**Status: in progress.** Day 4 of an 8 day build. See [Progress](#progress).
 
 ---
 
@@ -171,6 +171,7 @@ src/sophia/
   knowledge.py      Retrieval over the practice documents
   safety.py         Clinical screening, deterministic, ahead of the model
   providers.py      Groq and Gemini behind one interface
+  voice_app.py      Pipecat pipeline and the call server
   policies.py       The business rules, as pure tested functions
   tools.py          What the model may call, and everything it may not
   schemas.py        Tool definitions sent to the model
@@ -179,7 +180,7 @@ src/sophia/
 scripts/
   init_db.py        Rebuild the demo database from scratch
   chat.py           Talk to Sophia in the terminal
-tests/              328 tests: schema, time, policy, tools, retrieval, safety, providers
+tests/              343 tests, none of which need an API key
 docs/               Architecture diagram and the engineering log
 ```
 
@@ -323,7 +324,7 @@ contradictory, written down rather than hidden.
 | 1 | Repo, clinic data, SQLite schema and seed | Done |
 | 2 | Text agent with tool calling against SQLite | Done |
 | 3 | Policy logic, FAQ retrieval, safety escalation | Done |
-| 4 | Voice layer, browser call end to end | Not started |
+| 4 | Voice layer, browser call end to end | Done |
 | 5 | Voice polish, interruptions, latency | Not started |
 | 6 | Scenario eval suite and latency measurement | Not started |
 | 7 | Demo video and documentation | Not started |

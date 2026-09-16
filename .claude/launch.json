@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "sophia-voice",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "sophia.voice_app:app",
+        "--app-dir",
+        "src",
+        "--port",
+        "7860"
+      ],
+      "port": 7860
+    }
+  ]
+}

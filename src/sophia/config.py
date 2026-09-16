@@ -131,7 +131,12 @@ class LLMSettings:
     is exactly how a key ends up in a log file or a screenshot.
     """
 
-    provider: str = field(default_factory=lambda: _env("LLM_PROVIDER", "groq"))
+    # Gemini by default. Groq answers a single request faster, but its
+    # free tier allows 8000 tokens per minute and a tool calling turn
+    # resends the prompt and every schema on each round trip, so a real
+    # conversation stalls for the best part of a minute. Measured, not
+    # assumed: see docs/ENGINEERING_LOG.md entry 16.
+    provider: str = field(default_factory=lambda: _env("LLM_PROVIDER", "gemini"))
     groq_api_key: str = field(
         default_factory=lambda: _env("GROQ_API_KEY", ""), repr=False
     )
@@ -179,8 +184,17 @@ class SpeechSettings:
     stt_language: str = field(
         default_factory=lambda: _env("DEEPGRAM_STT_LANGUAGE", "en-GB")
     )
-    tts_model: str = field(
-        default_factory=lambda: _env("DEEPGRAM_TTS_MODEL", "aura-2-thalia-en")
+    # Checked against the Deepgram models endpoint on 16 September 2026.
+    # The Day 1 placeholder was aura-2-thalia-en, which is an AMERICAN
+    # voice. An American receptionist answering a Warrington dental
+    # practice is the kind of detail that undoes everything else.
+    #
+    # Deepgram lists four British voices. pandora is the newer aura-2
+    # generation and reads calm and smooth, which suits someone who has to
+    # talk to people in pain. aura-athena-en is the alternative, a little
+    # more formal.
+    tts_voice: str = field(
+        default_factory=lambda: _env("DEEPGRAM_TTS_VOICE", "aura-2-pandora-en")
     )
 
 

@@ -20,6 +20,11 @@ pydantic==2.13.5
 chromadb==1.5.9
 sentence-transformers==6.0.1
 
+# Voice layer, Day 4. Versions checked against PyPI on 16 September 2026.
+# The webrtc extra is what removes the need for a phone number, and so the
+# need to spend anything.
+pipecat-ai[deepgram,webrtc,runner]==1.10.0
+
 # Tests
 pytest==9.1.1
 freezegun==1.5.5

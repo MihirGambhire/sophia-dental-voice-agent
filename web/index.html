@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sophia, Museum Street Dental Practice</title>
+<style>
+  :root {
+    --ink: #17212b;
+    --muted: #5d6b7a;
+    --line: #dde3ea;
+    --bg: #f5f7f9;
+    --card: #ffffff;
+    --accent: #1f6feb;
+    --danger: #b3261e;
+    --danger-bg: #fdeceb;
+    --urgent: #8a5a00;
+    --urgent-bg: #fff6e3;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 24px 16px 60px; }
+
+  header { margin-bottom: 20px; }
+  h1 { font-size: 21px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 14px; }
+  .disclaimer {
+    margin-top: 12px; padding: 9px 12px; border-radius: 7px;
+    background: #fff8e1; border: 1px solid #f2e2b0;
+    font-size: 13px; color: #6b5619;
+  }
+
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 11px; padding: 18px; margin-bottom: 16px;
+  }
+
+  .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button {
+    font: inherit; font-weight: 600; border-radius: 8px; padding: 11px 20px;
+    border: 1px solid transparent; cursor: pointer;
+  }
+  #call { background: var(--accent); color: #fff; }
+  #call:hover:not(:disabled) { background: #1a5fd0; }
+  #hangup { background: #fff; color: var(--danger); border-color: #e7c3c0; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+
+  .status { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #c2cad3; flex: none; }
+  .dot.live { background: #1a9c4a; animation: pulse 1.6s infinite; }
+  .dot.connecting { background: #d99a00; animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em;
+       color: var(--muted); margin: 0 0 12px; font-weight: 600; }
+
+  .turn { margin-bottom: 14px; }
+  .who { font-size: 12px; font-weight: 700; letter-spacing: .04em;
+         text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
+  .turn.sophia .who { color: var(--accent); }
+  .text { white-space: pre-wrap; }
+  .meta { margin-top: 5px; font-size: 12px; color: var(--muted); }
+  code { background: #eef1f5; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+
+  .turn.emergency {
+    background: var(--danger-bg); border-left: 3px solid var(--danger);
+    padding: 10px 12px; border-radius: 0 7px 7px 0;
+  }
+  .turn.emergency .who { color: var(--danger); }
+  .turn.urgent {
+    background: var(--urgent-bg); border-left: 3px solid var(--urgent);
+    padding: 10px 12px; border-radius: 0 7px 7px 0;
+  }
+  .empty { color: var(--muted); font-size: 14px; }
+  .err { color: var(--danger); font-size: 14px; margin-top: 10px; }
+  footer { margin-top: 26px; font-size: 12.5px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>Museum Street Dental Practice</h1>
+    <div class="sub">Speak to Sophia, the practice's AI assistant</div>
+    <div class="disclaimer">
+      Unofficial concept demo. Not affiliated with, endorsed by, or connected to
+      Museum Street Dental Practice. All patient records are invented.
+    </div>
+  </header>
+
+  <div class="card">
+    <div class="controls">
+      <button id="call">Start call</button>
+      <button id="hangup" disabled>Hang up</button>
+      <div class="status"><span class="dot" id="dot"></span><span id="state">Not connected</span></div>
+    </div>
+    <div class="err" id="error" hidden></div>
+    <div class="meta" id="setup" style="margin-top:12px"></div>
+  </div>
+
+  <div class="card">
+    <h2>Transcript</h2>
+    <div id="transcript"><div class="empty">Start the call and say hello.</div></div>
+  </div>
+
+  <footer>
+    Calls may be recorded. Sophia is an AI assistant, not a clinician, and cannot
+    give clinical or medication advice. In an emergency call 999.
+  </footer>
+</div>
+
+<audio id="audio" autoplay></audio>
+
+<script>
+const callBtn = document.getElementById('call');
+const hangBtn = document.getElementById('hangup');
+const stateEl = document.getElementById('state');
+const dotEl = document.getElementById('dot');
+const errEl = document.getElementById('error');
+const setupEl = document.getElementById('setup');
+const transcriptEl = document.getElementById('transcript');
+const audioEl = document.getElementById('audio');
+
+let pc = null, poller = null, seen = 0;
+
+function setState(text, cls) {
+  stateEl.textContent = text;
+  dotEl.className = 'dot' + (cls ? ' ' + cls : '');
+}
+
+function showError(message) {
+  errEl.textContent = message;
+  errEl.hidden = !message;
+}
+
+fetch('/api/health').then(r => r.json()).then(info => {
+  setupEl.innerHTML = 'Model: <code>' + info.model + '</code> via <code>' +
+    info.provider + '</code> &nbsp; Voice: <code>' + info.voice + '</code>';
+  if (!info.speech_configured) {
+    showError('No Deepgram key configured, so the call cannot start.');
+    callBtn.disabled = true;
+  }
+}).catch(() => {});
+
+function render(events) {
+  if (!events.length) return;
+  if (seen === 0) transcriptEl.innerHTML = '';
+
+  for (const event of events) {
+    if (event.type === 'error') {
+      showError(event.text);
+      continue;
+    }
+    const div = document.createElement('div');
+    let cls = 'turn ' + (event.type === 'caller' ? 'caller' : 'sophia');
+    if (event.safety === 'emergency_999') cls += ' emergency';
+    else if (event.safety === 'urgent_same_day') cls += ' urgent';
+    div.className = cls;
+
+    const who = document.createElement('div');
+    who.className = 'who';
+    who.textContent = event.type === 'caller' ? 'You' : 'Sophia';
+    div.appendChild(who);
+
+    const text = document.createElement('div');
+    text.className = 'text';
+    text.textContent = event.text;
+    div.appendChild(text);
+
+    const bits = [];
+    if (event.tools && event.tools.length) bits.push('tools: ' + event.tools.join(', '));
+    if (event.seconds !== undefined) bits.push(event.seconds + 's');
+    if (event.safety === 'emergency_999') bits.push('999 escalation, booking blocked');
+    else if (event.safety === 'urgent_same_day') bits.push('same day urgency');
+    if (bits.length) {
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = bits.join('  |  ');
+      div.appendChild(meta);
+    }
+    transcriptEl.appendChild(div);
+  }
+  window.scrollTo(0, document.body.scrollHeight);
+}
+
+async function poll() {
+  try {
+    const data = await (await fetch('/api/events?after=' + seen)).json();
+    if (data.events.length) { render(data.events); seen = data.total; }
+  } catch (e) { /* the call matters, the panel does not */ }
+}
+
+callBtn.onclick = async () => {
+  showError('');
+  callBtn.disabled = true;
+  setState('Asking for the microphone', 'connecting');
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    showError('Microphone permission is needed to make a call.');
+    setState('Not connected');
+    callBtn.disabled = false;
+    return;
+  }
+
+  try {
+    setState('Connecting', 'connecting');
+    transcriptEl.innerHTML = '<div class="empty">Connecting...</div>';
+    seen = 0;
+
+    pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+    stream.getTracks().forEach(track => pc.addTrack(track, stream));
+    pc.addTransceiver('audio', { direction: 'recvonly' });
+    pc.ontrack = event => { audioEl.srcObject = event.streams[0]; };
+
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'connected') {
+        setState('On the call', 'live');
+        hangBtn.disabled = false;
+      } else if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) {
+        cleanup('Call ended');
+      }
+    };
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await new Promise(resolve => {
+      if (pc.iceGatheringState === 'complete') return resolve();
+      pc.onicegatheringstatechange = () =>
+        pc.iceGatheringState === 'complete' && resolve();
+      setTimeout(resolve, 2500);
+    });
+
+    const response = await fetch('/api/offer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sdp: pc.localDescription.sdp,
+        type: pc.localDescription.type
+      })
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error || ('Server returned ' + response.status));
+    }
+    await pc.setRemoteDescription(await response.json());
+
+    poller = setInterval(poll, 700);
+  } catch (e) {
+    showError(e.message);
+    cleanup('Not connected');
+  }
+};
+
+function cleanup(message) {
+  if (poller) { clearInterval(poller); poller = null; }
+  if (pc) { pc.close(); pc = null; }
+  if (audioEl.srcObject) {
+    audioEl.srcObject.getTracks().forEach(t => t.stop());
+    audioEl.srcObject = null;
+  }
+  setState(message || 'Not connected');
+  callBtn.disabled = false;
+  hangBtn.disabled = true;
+}
+
+hangBtn.onclick = () => cleanup('Call ended');
+</script>
+</body>
+</html>
