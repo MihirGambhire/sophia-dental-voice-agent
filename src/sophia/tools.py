@@ -144,6 +144,25 @@ def _name_similarity(said: str, recorded: str) -> float:
     return SequenceMatcher(None, _normalise_name(said), _normalise_name(recorded)).ratio()
 
 
+def _parse_hhmm(value: str | None):
+    """
+    Read a time of day like "14:00", "2pm" or "2:30 pm". None if absent or unreadable.
+
+    Unreadable is treated as no filter rather than an error, because the
+    worst outcome of ignoring it is offering times outside the window,
+    which Sophia will read out and the caller can decline.
+    """
+    text = (value or "").strip().lower().replace(".", "")
+    if not text:
+        return None
+    for fmt in ("%H:%M", "%H", "%I%p", "%I %p", "%I:%M%p", "%I:%M %p"):
+        try:
+            return datetime.strptime(text, fmt).time()
+        except ValueError:
+            continue
+    return None
+
+
 def _edit_distance(a: str, b: str) -> int:
     """Levenshtein distance, small inputs only."""
     previous = list(range(len(b) + 1))
@@ -476,6 +495,8 @@ class SophiaTools:
         clinician_name: str | None = None,
         earliest_date: str | None = None,
         limit: int = 5,
+        after_time: str | None = None,
+        before_time: str | None = None,
     ) -> dict:
         """
         Real availability, computed from working hours minus what is booked.
@@ -483,7 +504,16 @@ class SophiaTools:
         Availability is never stored, so it cannot drift out of date. The
         lunch closure and the weekend fall out automatically, because a
         clinician simply has no hours block covering them.
+
+        after_time and before_time exist because of an evaluation failure.
+        A caller asked for "something in the afternoon, after two o'clock".
+        With no way to ask for a time of day, and with the results spread
+        by taking the earliest slot on each day, this only ever returned
+        mornings. Sophia faithfully told the caller there were no afternoon
+        appointments, which was false: the afternoons were almost empty.
         """
+        window_start = _parse_hhmm(after_time)
+        window_end = _parse_hhmm(before_time)
         type_row = self._type_row(appointment_type)
         if not type_row["is_bookable"]:
             return {
@@ -539,7 +569,11 @@ class SophiaTools:
 
                     while cursor + timedelta(minutes=duration) <= block_end:
                         finish = cursor + timedelta(minutes=duration)
-                        if cursor <= self.now:
+                        outside_window = (
+                            (window_start and cursor.time() < window_start)
+                            or (window_end and cursor.time() >= window_end)
+                        )
+                        if cursor <= self.now or outside_window:
                             cursor += timedelta(minutes=SLOT_GRID_MINUTES)
                             continue
                         clashes = any(

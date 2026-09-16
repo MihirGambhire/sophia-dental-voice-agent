@@ -959,3 +959,47 @@ def test_without_a_caller_the_tools_do_not_check_spoken_words(conn):
     session = at(conn, a_weekday_at(10))
     assert session.caller_heard is None
     assert session.verify_patient("Margaret Hollis", "1958-03-12", "WA1 2NF")["verified"]
+
+
+# ---------------------------------------------------------------------------
+# Time of day filtering, found missing by the scenario suite
+# ---------------------------------------------------------------------------
+
+
+def test_an_afternoon_request_returns_only_afternoon_slots(conn):
+    """
+    The suite caught Sophia telling a caller there were no afternoon
+    appointments, when the afternoons were almost empty. The search could
+    not filter by time, and spreading results took each day's earliest.
+    """
+    session, _ = verified(conn, "hollis")
+    result = session.find_available_slots("NHS_EXAM", after_time="14:00", limit=5)
+
+    assert result["slots"], "afternoon availability exists and must be found"
+    assert all(slot["time"] >= "14:00" for slot in result["slots"])
+
+
+def test_a_morning_request_returns_only_morning_slots(conn):
+    session, _ = verified(conn, "hollis")
+    result = session.find_available_slots("NHS_EXAM", before_time="12:00", limit=5)
+
+    assert result["slots"]
+    assert all(slot["time"] < "12:00" for slot in result["slots"])
+
+
+@pytest.mark.parametrize("spoken", ["14:00", "2pm", "2 pm", "2:00 pm", "14"])
+def test_the_time_filter_accepts_the_ways_a_model_writes_a_time(conn, spoken):
+    session, _ = verified(conn, "hollis")
+    result = session.find_available_slots("NHS_EXAM", after_time=spoken, limit=5)
+    assert result["slots"] and all(slot["time"] >= "14:00" for slot in result["slots"])
+
+
+def test_an_unreadable_time_is_ignored_rather_than_breaking_the_search(conn):
+    session, _ = verified(conn, "hollis")
+    assert session.find_available_slots("NHS_EXAM", after_time="teatime", limit=5)["slots"]
+
+
+def test_a_time_window_still_never_offers_the_lunch_hour(conn):
+    session, _ = verified(conn, "hollis")
+    result = session.find_available_slots("NHS_EXAM", after_time="12:30", before_time="14:30", limit=20)
+    assert all(not ("13:00" <= slot["time"] < "14:00") for slot in result["slots"])

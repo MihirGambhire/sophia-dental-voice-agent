@@ -247,13 +247,41 @@ class _GeminiCompletions:
         if kwargs.get("tools"):
             gen_config["tools"] = _to_gemini_tools(kwargs["tools"])
 
-        response = self._client.models.generate_content(
+        response = self._generate_with_retry(
             model=kwargs["model"],
             contents=contents,
             config=types.GenerateContentConfig(**gen_config),
         )
 
         return self._to_openai_shape(response)
+
+    # Waits between attempts. Short enough that a caller on a live call is
+    # not left in silence for long, long enough to ride out a burst.
+    RETRY_DELAYS_SECS = (1.5, 4.0, 9.0)
+
+    def _generate_with_retry(self, **request):
+        """
+        Retry a request that failed for reasons worth retrying.
+
+        Gemini returned 503 "high demand" for several models during testing,
+        and the free tier answers 429 when requests arrive too quickly. Both
+        are transient, and the request is safe to repeat because nothing has
+        happened yet: tools only run after a successful response. Anything
+        else, like a bad request, fails immediately.
+        """
+        import time
+
+        from google.genai import errors
+
+        for attempt, delay in enumerate((*self.RETRY_DELAYS_SECS, None)):
+            try:
+                return self._client.models.generate_content(**request)
+            except (errors.ServerError, errors.ClientError) as failure:
+                status = getattr(failure, "code", None)
+                retryable = isinstance(failure, errors.ServerError) or status == 429
+                if not retryable or delay is None:
+                    raise
+                time.sleep(delay)
 
     def _to_openai_shape(self, response) -> _Response:
         text_parts: list[str] = []

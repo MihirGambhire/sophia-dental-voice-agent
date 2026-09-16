@@ -80,6 +80,8 @@ TOOL_SCHEMAS: list[dict] = [
             "appointment_type": _STRING,
             "clinician_name": _STRING,
             "earliest_date": {"type": "string", "description": "YYYY-MM-DD"},
+            "after_time": {"type": "string", "description": "HH:MM, e.g. 14:00 for afternoons"},
+            "before_time": {"type": "string", "description": "HH:MM, e.g. 12:00 for mornings"},
         },
         ["appointment_type"],
     ),
