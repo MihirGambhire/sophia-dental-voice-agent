@@ -4,21 +4,37 @@
 > Every patient record in this repository is invented. Every clinician named in it is a fictional character.
 > No real patient data has been used at any point.
 
-Sophia answers the phone for a busy NHS and private dental practice. She
-screens for dental emergencies, books and cancels appointments, quotes the
-right fee for the right patient, explains practice policy honestly, and
-takes a message when she cannot help.
+Sophia answers the phone for a busy NHS and private dental practice, and
+rings patients back. She screens for dental emergencies before anything
+else, books, moves and cancels appointments, quotes the right fee for the
+right patient, explains practice policy honestly, lets callers talk over
+her, and takes a message when she cannot help.
 
 She runs entirely on free tiers and open source. Total cost to build and
 run: nothing.
 
-**Status: in progress.** Day 4 of an 8 day build. See [Progress](#progress).
+---
+
+## Contents
+
+- [Why a dental practice](#why-a-dental-practice)
+- [What Sophia can do](#what-sophia-can-do)
+- [Design principle: the model talks, the code decides](#design-principle-the-model-talks-the-code-decides)
+- [Architecture](#architecture)
+- [Evaluation](#evaluation)
+- [Running it](#running-it)
+- [Tech stack, and why](#tech-stack-and-why)
+- [Repository layout](#repository-layout)
+- [Engineering log](#engineering-log)
+- [Data and modelling notes](#data-and-modelling-notes)
+- [Assumptions and limitations](#assumptions-and-limitations)
+- [Sources](#sources)
 
 ---
 
 ## Why a dental practice
 
-UK dental access is genuinely under pressure, and the pressure lands on the
+UK dental access is under real pressure, and that pressure lands on the
 phone.
 
 - Only about **40% of adults in England** were seen by an NHS dentist in
@@ -32,65 +48,82 @@ phone.
   provider pricing setup from around £3,500 plus £300 to £600 per month. The
   market already pays for this.
 
-The practice modelled here has a public booking workflow with several
-visible gaps that a voice agent is genuinely well suited to:
+The practice modelled here has a public booking workflow with gaps a voice
+agent is well suited to:
 
 | Gap in the public workflow | What Sophia does about it |
 |---|---|
 | NHS appointments cannot be booked online or by email, phone only | Takes NHS bookings by voice |
-| Urgent appointments released by phone from 8am, limited number per day | Enforces the 8am release, offers what is genuinely left |
+| Urgent appointments released by phone from 8am, limited number per day | Enforces the 8am release, offers only what is genuinely left |
 | Closed 1pm to 2pm every weekday, and all weekend | Still answers, books future slots, gives out of hours numbers |
-| The practice no longer sends reminders to book check ups | Outbound recall and day before reminder calls |
+| The practice no longer sends reminders to book check ups | Rings patients the day before, and when they are due a check up |
 | Registration lapses silently after three years | Detects the lapse and quotes the correct new patient fee |
 
 ---
 
 ## What Sophia can do
 
-**Clinical safety first.** Before anything else, an urgent call is screened.
-Red flag symptoms get a clear instruction to call 999 and the booking flow
-stops. Same day problems are offered an urgent slot. Sophia never diagnoses
-and never advises on medication.
+**Clinical safety before anything else.** What the caller says is screened
+by deterministic code before the model sees it. Red flag symptoms, such as
+swelling with difficulty breathing, get an immediate instruction to ring
+999 without waiting on the model, and no booking is offered. Same day problems are
+offered today's urgent appointments. She never diagnoses, and a reply
+containing a medicine dose is replaced before the caller hears it.
 
 **Identity before information.** Full name, date of birth and postcode are
-confirmed before any appointment detail is revealed or changed. A mismatch
-reveals nothing at all.
+confirmed before anything is revealed or changed. A mismatch reveals
+nothing, including which detail was wrong. The postcode must be one the
+caller actually said: the model was once caught inventing one.
 
 **Bookings that respect real rules.** New patient versus routine
 examination, the three year registration lapse, NHS bands versus private
-fees, hygienist direct access eligibility, the lunch closure, and clinician
-specific working days.
+fees, hygienist direct access, the lunch closure, clinician specific
+working days, and time of day requests like "after two o'clock".
 
-**Honest cancellations.** Cancelling inside 24 hours is explained plainly as
-a Short Notice Cancellation before it is recorded, along with a warning if
-the patient is close to being discharged.
+**Honest cancellations.** Cancelling inside 24 hours is explained as a Short
+Notice Cancellation before it is recorded, with a warning if the patient
+is close to being removed from the practice list.
 
 **Honest answers about NHS places.** Capacity is limited and the waiting
 list is paused. Sophia says so, offers to take details for a callback, and
 mentions the private route, rather than inventing availability.
 
-**Knows what she does not know.** Anything outside the data becomes a
+**Outbound reminder calls.** Sophia rings patients the day before an
+appointment, and recalls patients overdue a check up before their
+registration lapses. If someone else answers,
+she reveals nothing, and not because a prompt asks her not to: until the
+right patient is verified, the model has not been told anything to reveal.
+
+**A real phone manner.** Callers can interrupt her. Her own voice echoing
+back through a phone speaker is recognised and ignored, so she does not
+cut herself off. Sentences split by a pause are treated as one.
+
+**Honest about what she is and what she knows.** She says she is an AI in
+the first sentence and whenever asked. Anything outside the data becomes a
 message for the human team.
 
 ---
 
 ## Design principle: the model talks, the code decides
 
-The language model's only job is to understand the caller and choose a
-tool. It does not hold the fee list, the opening hours, or the cancellation
-policy in its head, and it is never trusted to do arithmetic on dates.
+The model's job is to understand the caller and choose a tool. It does not
+hold the fee list, the opening hours or the cancellation policy in its
+head, and it is never trusted with arithmetic on dates.
 
 Every rule that could give a caller wrong information lives in Python and
-SQLite, enforced by tests:
+SQLite, and is enforced by tests rather than requested in a prompt:
 
-- Availability comes from the database, not from the model.
-- Fees come from a price table keyed by eligibility, not from the model.
-- Whether a cancellation is short notice is computed in code, not judged by
-  the model.
-- A booking tool refuses to run at all if the patient has not been verified.
+- Availability, fees and policy come from the database, never from memory.
+- Every patient tool raises before doing anything if the caller has not
+  been verified. That is an `if` statement, and no conversation talks past it.
+- A cancellation refuses to run without an explicit confirmation flag, so
+  the warning cannot come after the record is written.
+- A reply claiming a booking or a verification that the call state
+  contradicts is replaced before the caller hears it. Both happened in
+  testing, despite prompt rules forbidding them.
 
-This is the difference between a demo that sounds convincing and one that
-is safe to put in front of a patient.
+This project learned the hard way that a rule in a prompt is a preference.
+The [engineering log](docs/ENGINEERING_LOG.md) has the examples.
 
 ---
 
@@ -100,89 +133,96 @@ is safe to put in front of a patient.
 flowchart TB
     Caller([Caller in a browser])
 
-    subgraph Voice["Voice layer, Pipecat over WebRTC"]
-        STT[Deepgram STT, en-GB]
-        TTS[Deepgram TTS, British voice]
+    subgraph Voice["Voice layer, Pipecat, audio over one WebSocket"]
+        VAD[Voice activity detection]
+        STT[Deepgram speech to text, en-GB]
+        Turn[[Turn taking: joins pauses,<br/>detects interruptions, ignores echo]]
+        TTS[Deepgram text to speech, British voice]
     end
 
-    subgraph Brain["Agent"]
-        LLM[Groq, Llama 3.3 70B<br/>Gemini Flash as fallback]
-        Safety[[Safety screen<br/>keyword rules, then classifier]]
+    subgraph Agent["Agent"]
+        Safety[[Safety screen<br/>deterministic, before the model]]
+        LLM[Gemini flash-lite<br/>Groq gpt-oss as an alternative]
+        Guards[[Reply guards<br/>false claims, medicine advice]]
     end
 
-    subgraph Logic["Business logic, deterministic Python"]
-        Tools[tools.py<br/>9 tool implementations]
-        Policies[policies.py<br/>fees, eligibility, SNC and FTA rules]
+    subgraph Logic["Business logic, plain Python"]
+        Tools[tools.py<br/>verification, slots, booking, cancelling]
+        Policies[policies.py<br/>fees, eligibility, discharge rules]
         Clock[clock.py<br/>opening hours, 8am release, BST]
+        Knowledge[knowledge.py<br/>practice facts]
     end
 
-    subgraph Data["Data"]
-        SQLite[(SQLite<br/>patients, appointments,<br/>urgent slots, attendance)]
-        Chroma[(ChromaDB<br/>practice FAQ)]
-    end
+    DB[(SQLite<br/>patients, appointments,<br/>urgent slots, reminders)]
 
-    Caller <--> STT
-    TTS --> Caller
-    STT --> Safety
-    Safety -->|red flag| TTS
+    Caller <--> VAD --> STT --> Turn
+    Turn --> Safety
+    Safety -->|red flag: 999, no model| TTS
     Safety -->|safe to continue| LLM
     LLM <-->|tool calls| Tools
-    LLM --> TTS
-    Tools --> Policies
-    Policies --> Clock
-    Tools <--> SQLite
-    Tools <--> Chroma
+    LLM --> Guards --> TTS
+    TTS --> Caller
+    Tools --> Policies --> Clock
+    Tools --> Knowledge
+    Tools <--> DB
 ```
 
-The safety screen sits **before** the model in the path, not after it. A
-caller describing difficulty breathing gets the 999 instruction from
-deterministic code, without waiting on a model to decide.
+Two positions in that diagram are deliberate. The safety screen sits
+**before** the model, so an emergency never waits on it or depends on it.
+The reply guards sit **after** the model, so what the caller hears is
+checked against what actually happened on the call.
+
+The audio travels over one WebSocket on the same HTTPS connection as the
+page. It started as WebRTC, which connects peer to peer and failed for
+every caller not on the machine running the server. See entry 22 of the
+engineering log.
 
 ---
 
-## Tech stack, and why
+## Evaluation
 
-| Piece | Choice | Reason |
-|---|---|---|
-| Voice transport | Pipecat, browser WebRTC | Open source, and no phone number means no cost |
-| Speech to text | Deepgram, `nova-3`, en-GB | Free signup credit, UK English matters for postcodes and names |
-| Text to speech | Deepgram Aura, British voice | Same credit, same pipeline, low latency |
-| Language model | Groq, `llama-3.3-70b-versatile` | Free tier, and fast inference is what makes voice feel natural |
-| Fallback model | Gemini Flash | Free tier, switchable with one config value |
-| Database | SQLite | Zero setup, and the rules need a real relational model |
-| FAQ retrieval | ChromaDB and `all-MiniLM-L6-v2` | Keeps practice facts out of the prompt, which protects the free tier |
-| Tests | pytest | Policy rules, safety screening, and scripted conversations |
+Unit tests prove the loop, the tools and the guard rails. They cannot
+prove what the real model does with a real caller, which is where nearly
+every serious bug in this project was found. So there are two layers.
 
-All model names and package versions were checked against official sources
-on 16 September 2026, not assumed.
+**450 unit tests**, run with no API key and no network:
 
----
-
-## Repository layout
-
+```bash
+python -m pytest -q
 ```
-data/
-  practice_info/    Practice facts as markdown, rewritten in our own words, indexed for retrieval
-  seed/             Invented clinicians, the real fee structure, fake patients
-src/sophia/
-  config.py         Every business constant and model name in one place
-  clock.py          Opening hours, the 8am urgent release, spoken UK dates, BST handling
-  db.py             SQLite schema and the seeder
-  knowledge.py      Retrieval over the practice documents
-  safety.py         Clinical screening, deterministic, ahead of the model
-  providers.py      Groq and Gemini behind one interface
-  voice_app.py      Pipecat pipeline and the call server
-  policies.py       The business rules, as pure tested functions
-  tools.py          What the model may call, and everything it may not
-  schemas.py        Tool definitions sent to the model
-  prompts.py        Sophia's system prompt, deliberately short
-  agent_text.py     The conversation loop
-scripts/
-  init_db.py        Rebuild the demo database from scratch
-  chat.py           Talk to Sophia in the terminal
-tests/              343 tests, none of which need an API key
-docs/               Architecture diagram and the engineering log
+
+**A scenario suite against the real model**, in `evals/`: 20 scripted calls
+drawn from the practice's real rules, including a booking, the lapsed
+patient fee, urgent slots before and after 8am, a 999 red flag, cancelling
+30 and 5 hours ahead, a wrong date of birth, a medicine question, weekend
+and lunchtime requests, a change of mind, and two outbound reminder calls,
+one answered by someone other than the patient.
+
+```bash
+python scripts/run_evals.py --repeat 3
 ```
+
+Scenarios are judged on outcomes, never on wording: what was written to the
+database and at what fee, which tools ran in what order, whether a warning
+came before an action. Each failure is attributed to a layer, generation,
+retrieval, tool logic or safety, because the fix differs for each.
+
+The script writes `docs/EVAL_RESULTS.md`: pass rates, turn latency, failures
+by layer, and the transcript of every failure. In the first full
+evaluation, three runs of each of the first 18 scenarios, Sophia passed 38
+of 39 completed runs, and the single failure was a bug in the check rather
+than in Sophia. The remaining runs were stopped by the free tier quota and
+are excluded, not counted as passes.
+
+What building the suite taught is worth recording here. It found one real
+bug: asked for "something in the afternoon", Sophia said there were no
+afternoon appointments when the afternoons were almost empty, because the
+slot search could not filter by time of day. The report first blamed the
+model; the transcript showed the tool. The suite also failed Sophia twice
+for bugs in its own checks, for saying "twenty-seven pounds ninety" and
+"twenty-four hours" in words, and a third check was lenient enough to pass
+a real leak spoken as "eleven in the morning". Attribution tells you where
+to look first. The transcript is still the evidence.
 
 ---
 
@@ -199,55 +239,91 @@ python scripts/init_db.py
 python -m pytest -q
 ```
 
-The whole test suite runs with no API key at all, because the conversation
-tests use a scripted stand in for the model rather than calling one.
+The data layer and every unit test work with no keys at all.
 
-To actually talk to her you need a free Groq key in `.env`, then:
+**Talk to Sophia in text.** Needs a free Gemini key in `.env`.
 
 ```bash
 python scripts/chat.py --show-tools
-```
-
-`--show-tools` prints every tool call and its arguments, which is the
-quickest way to see that the model is not inventing anything. `--at` pins
-the clock, so you can demonstrate the 8am urgent release or the lunch
-closure without waiting for one:
-
-```bash
 python scripts/chat.py --at "2026-09-21 07:45"
 ```
 
-On Windows, `tzdata` is required and is in `requirements.txt`. Windows has
-no system IANA timezone database, so `Europe/London` is otherwise
-unavailable to Python.
+`--show-tools` prints every tool call, the quickest way to see she is not
+inventing anything. `--at` pins the clock, to show rules like the 8am urgent
+release without waiting for one.
+
+**Talk to Sophia by voice.** Also needs a free Deepgram key.
+
+```bash
+python -m uvicorn sophia.voice_app:app --app-dir src --port 7861
+```
+
+Then open http://localhost:7861, press Start call, and allow the microphone.
+The call list on the page places outbound reminder calls: press Answer to
+play the person picking up.
+
+**Check the setup.**
+
+```bash
+python scripts/check_setup.py
+python scripts/list_models.py
+```
+
+Model names change without notice. `list_models.py` asks the provider what
+your key can actually use, which on one occasion was not what its own
+documentation said.
+
+On Windows, `tzdata` is required and is in `requirements.txt`, because
+Windows has no system timezone database.
 
 ---
 
-## Data and modelling notes
+## Tech stack, and why
 
-**Nothing here is copied from the practice website.** The facts were read,
-then rewritten into structured data files and plain markdown.
+| Piece | Choice | Reason |
+|---|---|---|
+| Language model | Gemini `gemini-3.5-flash-lite` | Free tier, tool calling intact, under a second per request when measured |
+| Alternative model | Groq `openai/gpt-oss-120b` | Faster per request, but its free tier caps tokens per minute and stalled real conversations for up to a minute |
+| Speech to text | Deepgram `nova-3`, en-GB | UK English matters for postcodes, surnames and "twenty past nine" |
+| Text to speech | Deepgram `aura-athena-en` | British, calm and professional, chosen by listening |
+| Voice pipeline | Pipecat, audio over a WebSocket | Open source, and no phone number means no cost |
+| Database | SQLite | Zero setup, and the rules need a real relational model |
+| Practice facts | Keyword retrieval over markdown | Eight short documents with a fixed vocabulary. It passes every retrieval test and returns nothing rather than a weak match. Embeddings would have added a 2.5 GB download for no measured gain |
+| Tests | pytest, plus a scenario suite | Deterministic rules offline, real model behaviour as pass rates |
 
-**Invented clinicians.** Six of them, with the real role structure: a
-principal dentist, an associate dentist who is also a partner, a second
-associate, a dentist with a special interest in root canal treatment, and
-two hygiene therapists. The real practice has far more dentists. A smaller
-set makes availability legible in a demo.
+Every model name and package version was checked against the live service
+or PyPI, not assumed. Two of the defaults written from memory on the first
+day turned out to be wrong: a retired model, and an American voice.
 
-**Fake patients, built around edge cases.** Twelve of them, each one
-existing to exercise a specific rule: a lapsed registration, a new patient
-one short notice cancellation away from discharge, an existing patient two
-away, a failure to attend on record, a child with a guardian, someone for
-the wrong date of birth test.
+---
 
-**Dates are relative, not fixed.** Patient history and appointments are
-stored in the seed data as offsets from the day the database is built, so
-the demo is never stale. The seeder also moves any seeded appointment that
-would land on a weekend, in the lunch hour, in the past, or on a day that
-clinician does not work.
+## Repository layout
 
-**Times are stored as local wall clock.** The reasoning, and why that is
-safe here, is written out at the top of `src/sophia/clock.py`.
+```
+data/
+  practice_info/    Practice facts as markdown, rewritten in our own words
+  seed/             Invented clinicians, the real fee structure, fake patients
+src/sophia/
+  config.py         Every constant, model name and key, keys hidden from logs
+  clock.py          Opening hours, the 8am urgent release, spoken UK dates, BST
+  db.py             SQLite schema and the seeder
+  policies.py       Business rules as pure, tested functions
+  tools.py          What the model may call, and everything it may not
+  schemas.py        Tool definitions, kept small for the free tier
+  prompts.py        The system prompt, deliberately short and holding no facts
+  knowledge.py      Retrieval over the practice documents
+  safety.py         Emergency screening and the medicine rule
+  agent_text.py     The conversation loop and the reply guards
+  providers.py      Gemini and Groq behind one interface
+  outbound.py       Reminder calls, and what may be known before verification
+  voice_app.py      The voice pipeline, turn taking and the web server
+  web_audio.py      The wire format for call audio
+evals/              The scenario suite: framework and scripted calls
+scripts/            init_db, chat, check_setup, list_models, run_evals
+tests/              450 unit tests
+web/                The call page, transcript and outbound call list
+docs/               Engineering log, evaluation results, architecture diagram
+```
 
 ---
 
@@ -255,23 +331,76 @@ safe here, is written out at the top of `src/sophia/clock.py`.
 
 [`docs/ENGINEERING_LOG.md`](docs/ENGINEERING_LOG.md) records every bug found
 during the build: what the symptom looked like, what the cause turned out
-to be, and what changed. It is kept because the causes were rarely where
-the symptoms pointed.
+to be, and what changed. It exists because the causes were rarely where the
+symptoms pointed.
 
-A representative one. Sophia was asked for the opening hours and answered
-nine to six with Saturday mornings. The real hours are eight to six,
-weekdays only, closed one to two. She called no tool at all. The system
-prompt already said, in capitals, that she knows nothing a tool has not
-told her, and that was never going to be enough, because no tool could
-answer the question. You cannot instruct a model out of a capability gap.
-"Never guess" only becomes a behaviour when there is somewhere to look and
-permission to come back empty.
+One representative entry. Asked for the opening hours, Sophia answered nine
+to six with Saturday mornings. The real hours are eight to six, weekdays
+only, closed one to two. She had called no tool. The prompt already said,
+in capitals, that she knows nothing a tool has not told her, and that was
+never going to be enough, because no tool could answer the question. You
+cannot instruct a model out of a capability gap.
 
 Others include a British Summer Time bug that would have misjudged
-cancellations every October, a model listed in the provider's own
-documentation that no longer exists, a confirmed booking that was never
-written to the database, and a token saving optimisation that made the
-system slower by deleting information it depended on.
+cancellations every October, a confirmed booking that was never written, a
+model inventing a postcode, a database connection that silently broke every
+voice booking, and her own echo making her interrupt herself.
+
+---
+
+## Data and modelling notes
+
+**Nothing is copied from the practice website.** The facts were read, then
+rewritten into structured data and plain markdown.
+
+**Invented clinicians.** Six, with the real role structure: a principal
+dentist, a partner, a second associate, a dentist with a special interest
+in root canal treatment, and two hygiene therapists. The real practice has
+far more dentists; a smaller set makes availability legible in a demo.
+
+**Fake patients, built around edge cases.** Twelve, each there to exercise
+a rule: a lapsed registration, a new patient one short notice cancellation
+from discharge, an existing patient two away, a failure to attend on
+record, a child with a guardian, someone for the wrong date of birth test.
+
+**Dates are relative, not fixed.** Seed data is stored as offsets from the
+day the database is built, so the demo never goes stale, and appointments
+that would land on a weekend, in the lunch hour, in the past, or on a
+clinician's day off are moved to a real free slot.
+
+**Times are stored as local wall clock.** The reasoning, and why it is safe
+here, is at the top of `src/sophia/clock.py`.
+
+---
+
+## Assumptions and limitations
+
+Choices made where public information was incomplete or contradictory, and
+limits of the demo, written down rather than hidden.
+
+- **The urgent release time is inconsistent in public.** One page says ring
+  from 8am, another says 9am to 5pm. This project uses 8am.
+- **"New patient" in the attendance policy is not defined publicly.** This
+  project assumes less than 12 months at the practice.
+- **The number of hygiene therapists is unknown.** Two are modelled.
+- **Several fee categories are not modelled**, including fillings, imaging, implants,
+  whitening, crowns, orthodontics and dentures. For anything not in the price table,
+  Sophia takes a message rather than guessing.
+- **The NHS website and the practice website disagree on new NHS patients.**
+  Sophia answers honestly about limited capacity rather than picking a side.
+- **Free tier limits.** Gemini's free tier allows 15 requests a minute and
+  500 a day per model, and one caller turn with tool calls can be several
+  requests. A few simultaneous callers can reach the first; a day of
+  testing plus a full evaluation reached the second. Requests are retried
+  briefly, but both are real ceilings.
+- **No real telephony.** Calls run in a browser. A real phone number costs
+  money and proves nothing extra in a demo.
+- **One shared demo database.** Everyone testing at once shares the same
+  fake patients, so one tester's booking takes a slot from the next.
+- **Not a production system.** Health data is special category data under
+  UK GDPR. A real deployment would need a data processing agreement, UK
+  hosting, retention rules, human clinical oversight and an audited safety
+  review. None of that is in scope.
 
 ---
 
@@ -280,98 +409,15 @@ system slower by deleting information it depended on.
 - Practice website and NHS.uk profile, read 16 September 2026, for opening
   hours, fees, booking routes and the attendance policy.
 - NHS guidance on finding an emergency NHS dentist, and on dental abscess,
-  nhs.uk, checked 16 September 2026, for the 999 red flag list. The draft
-  list in this project was **wrong** before that check: NHS wording is
-  severe swelling of mouth, lips, throat or neck **together with**
-  difficulty breathing or difficulty opening one or both eyes, and it also
-  names head or face injury causing loss of consciousness, vomiting or
-  double vision. Both were corrected.
+  nhs.uk, checked 16 September 2026, for the 999 red flags. The project's
+  own draft list was **wrong** before that check, and was corrected: NHS
+  wording is severe swelling of the mouth, lips, throat or neck **together
+  with** difficulty breathing or opening one or both eyes, and it also names
+  head or face injury causing loss of consciousness, vomiting or double
+  vision.
 - NHS dental charges for England, bands effective 1 April 2026.
 - Healthwatch, August 2026, on NHS dental access.
 - Nuffield Trust analysis on the share of practices offering NHS treatment.
-
----
-
-## Assumptions and limitations
-
-These are choices made where the public information was incomplete or
-contradictory, written down rather than hidden.
-
-- **The urgent release time is inconsistent in public.** One page says ring
-  from 8am, another says 9am to 5pm. This project uses 8am.
-- **"New patient" in the attendance policy is not defined publicly.** This
-  project assumes less than 12 months at the practice.
-- **The number of hygiene therapists is unknown.** Two are modelled.
-- **Several fee categories are not modelled**, including fillings, imaging,
-  implants, whitening, crowns, orthodontics and dentures. For anything not
-  in the price table, Sophia takes a message rather than guessing.
-- **Conflicting public information on new NHS patients.** The NHS website
-  and the practice website disagree. Sophia is written to answer honestly
-  about limited capacity rather than to pick a side.
-- **No real telephony.** Calls run in the browser. A real phone number costs
-  money and proves nothing extra in a demo.
-- **Not a production system.** Health data is special category data under UK
-  GDPR. A real deployment would need a data processing agreement, UK
-  hosting, retention rules, human clinical oversight and an audited safety
-  review. None of that is in scope here.
-
----
-
-## Progress
-
-| Day | Goal | Status |
-|---|---|---|
-| 1 | Repo, clinic data, SQLite schema and seed | Done |
-| 2 | Text agent with tool calling against SQLite | Done |
-| 3 | Policy logic, FAQ retrieval, safety escalation | Done |
-| 4 | Voice layer, browser call end to end | Done |
-| 5 | Voice polish, interruptions, latency | Not started |
-| 6 | Scenario eval suite and latency measurement | Not started |
-| 7 | Demo video and documentation | Not started |
-| 8 | Final checks | Not started |
-
-**Day 1 result:** 42 tests passing. Schema of 9 tables, 6 clinicians, 22
-appointment types, 12 fake patients, 90 urgent slots across three weeks.
-
-One of those tests earned its place immediately. The British Summer Time
-case failed on first run and exposed a real bug: Python defines subtraction
-between two aware datetimes sharing the same `tzinfo` object as wall clock
-arithmetic, silently ignoring the timezone. Ten in the morning on Saturday
-24 October to ten on Sunday 25 October came back as 24 hours when 25 hours
-have actually passed. Since 24 hours is exactly the line between a normal
-cancellation and a Short Notice Cancellation, that would have mis-judged
-real cancellations every October. Fixed by converting to UTC before
-subtracting, with the reason written into the code.
-
----
-
-**Day 2 result:** 205 tests passing. Twelve tools over the database, the
-policy engine, and a conversation loop with a terminal client.
-
-The tool layer is where the safety argument actually lives, so it is worth
-being concrete about what it refuses. Every patient tool raises rather than
-answers if the caller has not been verified, and that is one `if` statement
-in Python rather than an instruction in a prompt, so no amount of
-persuasion in the conversation gets past it. A failed identity check gives
-the same reply whether the patient does not exist or the postcode was
-wrong, because saying "the postcode is right" would confirm real data to
-someone who just failed a check. Asking about an appointment that belongs
-to someone else returns the identical error to asking about one that does
-not exist. Cancelling refuses outright unless an explicit confirmation flag
-is set, which forces the warning to be given before the record is touched,
-not after. Booking re-validates the slot at the moment of writing, so a
-time that was free when it was offered but has since gone is rejected
-rather than double booked. And a slot in the lunch hour, at the weekend, in
-the past, or with a clinician who does not work that day is refused even if
-it is requested directly.
-
-One bug worth recording. Slots were being offered four at a time from the
-same morning, because the search loop stopped once it had collected enough
-individual slots, and a single morning yields dozens. It never looked at a
-second day. The fix was to count days with availability rather than slots.
-Worth noting because the code was not wrong in any way a unit test of the
-function alone would have caught, only in a way that made the conversation
-useless.
 
 ---
 
@@ -379,5 +425,5 @@ useless.
 
 Real telephony over SIP, integration with a practice management system such
 as SOE Exact or Dentally, SMS confirmations, waiting list management,
-multilingual support, and analytics on how many missed calls were
-recovered.
+automatic failover between model providers when a free tier limit is hit,
+multilingual support, and reporting on how many missed calls were recovered.

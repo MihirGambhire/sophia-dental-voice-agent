@@ -235,3 +235,15 @@ def test_network_failures_are_incomplete_not_failures():
         result = RunResult(scenario, [], [], error=error)
         assert result.incomplete and not result.passed
     assert not RunResult(scenario, [], [], error="KeyError: 'slots'").incomplete
+
+
+def test_a_daily_quota_is_told_apart_from_the_minute_limit():
+    """Both are a 429. Only one of them is fixed by waiting a minute."""
+    daily = ("ClientError: 429 RESOURCE_EXHAUSTED. {'quotaId': "
+             "'GenerateRequestsPerDayPerProjectPerModel-FreeTier', 'quotaValue': '500'}")
+    minute = ("ClientError: 429 RESOURCE_EXHAUSTED. {'quotaId': "
+              "'GenerateRequestsPerMinutePerProjectPerModel-FreeTier', 'quotaValue': '15'}")
+    assert framework.is_daily_quota(daily)
+    assert not framework.is_daily_quota(minute)
+    assert framework.is_rate_limited(minute)
+    assert not framework.is_daily_quota("KeyError: 'PerDay'")

@@ -175,6 +175,16 @@ def is_rate_limited(error: str | None) -> bool:
     return bool(error) and ("429" in error or "RESOURCE_EXHAUSTED" in error)
 
 
+def is_daily_quota(error: str | None) -> bool:
+    """
+    The free tier has a per minute limit and a per day limit, and both come
+    back as the same 429. Only the quota id tells them apart. Waiting a
+    minute fixes the first and does nothing for the second, which once had
+    the runner retrying for hours toward a report of skipped runs.
+    """
+    return is_rate_limited(error) and "PerDay" in error
+
+
 # Failures of the connection rather than of anything Sophia did. The first
 # full run lost four scenarios to these, including a laptop DNS failure,
 # and the report would otherwise have counted them against her.

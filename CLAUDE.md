@@ -40,11 +40,11 @@ already settled, so they do not get re-opened by accident.
 |---|---|---|
 | 1 | Repo, clinic data, SQLite schema and seed | Done |
 | 2 | Text agent, tool calling against SQLite | Done |
-| 3 | Safety screen, FAQ retrieval, policy edge cases | Next |
-| 4 | Voice layer, browser call end to end | |
-| 5 | Voice polish: interruptions, latency, British voice | |
-| 6 | Scenario eval suite, latency measurement, outbound flow | |
-| 7 | README, architecture diagram, demo video | |
+| 3 | Safety screen, FAQ retrieval, policy edge cases | Done |
+| 4 | Voice layer, browser call end to end | Done |
+| 5 | Voice polish: interruptions, latency, British voice | Done |
+| 6 | Scenario eval suite, latency measurement, outbound flow | Done, latency figures pending |
+| 7 | README, architecture diagram, demo video | README done, video next |
 | 8 | Final checks | |
 
 Cut order if behind: optional dashboard, then outbound recall calls
@@ -189,14 +189,17 @@ data is missing, she takes a message.
 
 ## 7. Technical
 
-**Stack:** Python 3.11+, FastAPI, Pipecat over browser WebRTC, Groq
-(`llama-3.3-70b-versatile`) with Gemini Flash as a configurable fallback,
-Deepgram for speech to text and text to speech with UK English and a
-British voice, SQLite, ChromaDB with `all-MiniLM-L6-v2`, pytest.
+**Stack:** Python 3.11+, FastAPI, Pipecat with call audio over a
+WebSocket (WebRTC failed for remote callers, see the engineering log),
+Gemini `gemini-3.5-flash-lite` by default with Groq `openai/gpt-oss-120b`
+as a configurable alternative, Deepgram `nova-3` en-GB for speech to text
+and `aura-athena-en` for text to speech, SQLite, keyword retrieval over
+markdown (embeddings were dropped, the reason is in `requirements.txt`),
+pytest plus a live scenario suite in `evals/`.
 
 **Free tier protection:** keep the system prompt short, keep practice
 facts in retrieval rather than the prompt, keep the tool surface around a
-dozen, validate every tool call in code, cache embeddings.
+dozen, validate every tool call in code, and stay under the Gemini free tier of 15 requests a minute.
 
 **Layout:**
 ```
@@ -211,12 +214,16 @@ src/sophia/
   schemas.py    tool definitions
   prompts.py    system prompt
   agent_text.py conversation loop
-  safety.py     emergency screening        (Day 3)
-  rag.py        Chroma index and search    (Day 3)
-  voice_app.py  Pipecat pipeline           (Day 4)
-  outbound.py   reminder call runner       (Day 6)
-scripts/        init_db.py, chat.py
-tests/          205 tests and counting
+  safety.py     emergency screening and the medicine rule
+  knowledge.py  keyword retrieval over data/practice_info
+  providers.py  Gemini and Groq adapters, retries
+  outbound.py   reminder and recall calls
+  voice_app.py  Pipecat pipeline, turn taking, web server
+  web_audio.py  PCM wire format for the WebSocket
+evals/          live scenario suite, framework and scenarios
+scripts/        init_db, chat, check_setup, list_models, run_evals
+tests/          450 tests, no API key needed
+web/            call page
 ```
 
 **Times** are stored as local wall clock. The reasoning is written at the

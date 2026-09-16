@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT))
 
-from evals.framework import retry_delay_seconds, run_scenario, write_report  # noqa: E402
+from evals.framework import is_daily_quota, retry_delay_seconds, run_scenario, write_report  # noqa: E402
 from evals.scenarios import SCENARIOS, by_id  # noqa: E402
 from sophia import config  # noqa: E402
 
@@ -59,7 +59,10 @@ def main() -> None:
 
     results = []
     started = time.time()
+    out_of_quota = False
     for scenario in chosen:
+        if out_of_quota:
+            break
         for attempt in range(args.repeat):
             t0 = time.time()
             result = run_scenario(scenario, turn_pause=args.turn_pause)
@@ -67,7 +70,7 @@ def main() -> None:
             # provider asks, then rerun the whole scenario from a fresh
             # database rather than resuming a half finished conversation.
             for _ in range(args.rate_limit_retries):
-                if not result.incomplete:
+                if not result.incomplete or is_daily_quota(result.error):
                     break
                 # The quota is a rolling 60 second window, so a shorter wait just
                 # walks straight back into it. The first full run did exactly that.
@@ -77,6 +80,12 @@ def main() -> None:
                 time.sleep(wait)
                 result = run_scenario(scenario, turn_pause=args.turn_pause)
             results.append(result)
+            if is_daily_quota(result.error):
+                # No retry helps until the daily reset, so stop now and
+                # keep the report honest about how little was run.
+                print(f"  [STOP] Daily quota for {config.LLM.model} is used up. Stopping the run.")
+                out_of_quota = True
+                break
             mark = "PASS" if result.passed else ("SKIP" if result.incomplete else "FAIL")
             suffix = f" (run {attempt + 1})" if args.repeat > 1 else ""
             print(f"  [{mark}] {scenario.title}{suffix}  {time.time() - t0:.0f}s")
@@ -89,6 +98,10 @@ def main() -> None:
     limited = sum(result.incomplete for result in results)
     counted = len(results) - limited
     passed = sum(result.passed for result in results)
+    if out_of_quota and counted == 0:
+        # Writing a report of nothing would overwrite the last real one.
+        print(f"\nNo runs completed, so {args.out} was left unchanged.\n")
+        sys.exit(1)
     write_report(results, Path(args.out), config.LLM.provider, config.LLM.model, args.repeat)
     print(f"\n{passed} of {counted} runs passed in {time.time() - started:.0f}s"
           + (f", {limited} excluded after repeated rate limits or network errors" if limited else ""))

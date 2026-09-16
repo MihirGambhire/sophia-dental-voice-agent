@@ -660,6 +660,135 @@ filter proved nothing. It was transcribed in full, and rejected.
 
 ---
 
+### 25. The first scenario suite blamed the model for a tool bug
+
+**Symptom.** Every test so far had run against a scripted stand in for
+the model, so a suite of scripted calls against the real one was built,
+judged on outcomes and attributing each failure to a layer. In one early
+run a caller asked for "something in the afternoon, after two o'clock",
+and Sophia said there were no afternoon appointments. The afternoons were
+almost empty. The report put it down to generation.
+
+**Cause.** The slot search had no time of day filter, and it spread
+results across days by taking each day's earliest free slot. It could
+only ever return mornings. Sophia repeated what her tool told her,
+accurately.
+
+**Fix.** `find_available_slots` takes `after_time` and `before_time`. The
+check now attributes the failure by whether an afternoon slot was ever
+offered to the model: offered and ignored is generation, never offered is
+retrieval. It passed live after the fix.
+
+**Lesson.** Attribution rules are code, and they were wrong here in the
+most tempting direction. The transcript, not the label, is the evidence.
+
+---
+
+### 26. The suite failed Sophia for speaking like a person
+
+**Symptom.** Two failures in the first runs. She quoted "twenty-seven
+pounds ninety" and was marked as not quoting £27.90. Later, in the first
+full three run evaluation, she warned that a cancellation was "less than
+twenty-four hours away" and "a short-notice cancellation", and failed for
+not saying "24" and "short notice".
+
+**Cause.** The checks were written for text on a screen. Her prompt tells
+her to say numbers the way a person would, because every reply is spoken.
+
+**Fix.** Numeric patterns accept words and hyphens throughout. In that
+full evaluation Sophia passed 38 of 39 completed runs, and the one failure
+was this check.
+
+**The same fix exposed a worse problem in the other direction.** A leak
+check matching only "11 am" would pass "eleven in the morning", which is a
+real leak of a patient's appointment. A check that fails wrongly costs a
+look at a transcript; one that passes wrongly hides exactly what it
+exists to catch. Leak checks now share one set of patterns covering
+spoken days, ordinals and times, with a test that phrases a leak in words.
+
+---
+
+### 27. Quota and network errors were being scored as failures
+
+**Symptom.** Runs stopped partway with a 429, and on another occasion a
+laptop DNS failure cost four runs. Both appeared in the pass rate as
+failures, and retrying after the provider's suggested delay walked
+straight back into the limit.
+
+**Cause.** Gemini's free tier allows 15 requests a minute per model, and a
+single turn with tool calls is several requests. The window is rolling,
+so a wait shorter than a minute is not a real wait.
+
+**Fix.** Rate limited and network failed runs wait at least a minute (15
+seconds for network), rerun the whole scenario from a fresh database, and
+are reported separately as incomplete. The report counts only runs that
+finished. The provider adapter also retries 503 and 429 responses with a
+short backoff during a live call.
+
+**Then the daily limit.** The final rerun was rate limited on every
+attempt, including after full minute waits. A single probe request showed
+why: the quota hit was `GenerateRequestsPerDayPerProjectPerModel-FreeTier`,
+500 requests a day, used up by a day of live phone testing plus the
+earlier full evaluation. No wait shorter than the daily reset helps, so the
+run was stopped rather than left to spend hours writing a report of
+skipped runs.
+
+**Lesson.** The same limits apply to the live demo: a handful of people
+talking to Sophia at once can reach the minute limit, and a busy day of
+testing reaches the daily one. Both are written into the README
+limitations rather than left for a tester to discover. The runner should
+also tell the two apart and stop at once on a daily limit.
+
+---
+
+### 28. The medicine rule was the one rule still living in the prompt
+
+**Symptom.** None in testing. Found by reading the code against the
+project's own principle. The only thing preventing medicine advice was a
+line in the system prompt, while `safety.py` already had a medication
+detector and a scripted refusal that nothing called.
+
+**Fix.** Sophia's reply is checked before the caller hears it. A dose, a
+schedule, or a recommendation of a named medicine replaces the reply with
+the scripted refusal and a referral to a pharmacist or 111. A medicine
+question answered without that referral gets it added. The match is on
+Sophia's own words, so "I can't advise on ibuprofen" passes and "you could
+take ibuprofen" does not.
+
+At the same time, `chromadb` and `sentence-transformers` were removed from
+`requirements.txt`. Retrieval had become keyword matching and neither was
+imported anywhere, but anyone cloning the repo would still have
+downloaded about 2.5 GB, mostly PyTorch.
+
+**Lesson.** A principle stated in the README is only as true as the last
+place someone forgot it. Worth auditing for, not just following.
+
+---
+
+### 29. Outbound calls: nothing to leak, rather than a rule not to
+
+**Problem.** When Sophia rings a patient, whoever answers might not be
+the patient. The usual approach is a prompt line saying "do not reveal
+the appointment", and this project has watched the model ignore lines
+like that more than once.
+
+**Design.** The model is never told. Its call context holds the patient's
+name, so it can ask for them, and nothing else. Appointment details only
+reach it after `verify_patient` succeeds for that exact patient. A test
+searches everything sent to the model on the first turn for the
+appointment's day, time and clinician, and finds none of them.
+
+Two more guarantees are in code. A household member who passes the
+identity check with their own details is refused like any mismatch,
+because they are not the patient being called. A patient decision such as
+"confirmed" cannot be recorded without verification, while "wrong person"
+and "call back later" can.
+
+**Lesson.** The strongest privacy control is information the model does
+not have. It cannot be argued out of it, and it cannot say it by accident.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns
