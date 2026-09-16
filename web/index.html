@@ -103,6 +103,7 @@
     <div class="controls">
       <button id="call">Start call</button>
       <button id="hangup" disabled>Hang up</button>
+      <button id="reset" title="Put your fake patients and appointments back as they started">Reset my demo data</button>
       <div class="status"><span class="dot" id="dot"></span><span id="state">Not connected</span></div>
     </div>
     <div class="err" id="error" hidden></div>
@@ -148,6 +149,20 @@ const RATE = 16000;
 let ws = null, ctx = null, micStream = null, micNode = null, poller = null, seen = 0;
 let playHead = 0;              // when the next chunk of Sophia's voice starts
 let playing = [];              // queued sources, so a clear can stop them
+
+// Each tester has their own copy of the demo data and their own transcript,
+// kept by this id. Stored so a booking made on one call is still there to
+// cancel on the next. If storage is blocked it lasts until the page reloads.
+function makeId() {
+  return (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
+}
+let SESSION = null;
+try { SESSION = localStorage.getItem('sophia-session'); } catch (e) {}
+if (!SESSION || !/^[A-Za-z0-9-]{8,64}$/.test(SESSION)) {
+  SESSION = makeId().replace(/[^A-Za-z0-9-]/g, '');
+  try { localStorage.setItem('sophia-session', SESSION); } catch (e) {}
+}
+const S = encodeURIComponent(SESSION);
 
 function setState(text, cls) {
   stateEl.textContent = text;
@@ -226,7 +241,7 @@ async function poll() {
   if (polling) return;
   polling = true;
   try {
-    const data = await (await fetch('/api/events?after=' + seen)).json();
+    const data = await (await fetch('/api/events?session=' + S + '&after=' + seen)).json();
     if (data.events.length) { render(data.events); seen = data.total; }
   } catch (e) { /* the call matters, the panel does not */ }
   finally { polling = false; }
@@ -322,7 +337,7 @@ async function startCall(reminderId) {
     await ctx.audioWorklet.addModule(workletUrl);
 
     const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-    const query = reminderId ? `?reminder=${reminderId}` : '';
+    const query = `?session=${S}` + (reminderId ? `&reminder=${reminderId}` : '');
     ws = new WebSocket(`${scheme}://${location.host}/ws${query}`);
     ws.binaryType = 'arraybuffer';
 
@@ -386,6 +401,16 @@ function cleanup(message) {
 
 hangBtn.onclick = () => cleanup('Call ended');
 
+document.getElementById('reset').onclick = async () => {
+  if (ws) return;
+  try {
+    await fetch('/api/reset?session=' + S, { method: 'POST' });
+    transcriptEl.innerHTML = '<div class="empty">Demo data reset. Start the call and say hello.</div>';
+    seen = 0;
+    loadReminders();
+  } catch (e) { showError('Could not reset the demo data.'); }
+};
+
 const OUTCOME_LABELS = {
   confirmed: 'Confirmed', rescheduled: 'Moved', cancelled: 'Cancelled',
   booked_check_up: 'Booked a check up', declined: 'Declined',
@@ -396,7 +421,7 @@ const OUTCOME_LABELS = {
 async function loadReminders() {
   const list = document.getElementById('reminders');
   try {
-    const { calls } = await (await fetch('/api/reminders')).json();
+    const { calls } = await (await fetch('/api/reminders?session=' + S)).json();
     if (!calls.length) { list.innerHTML = '<div class="empty">Nothing to call.</div>'; return; }
     list.innerHTML = '';
     for (const call of calls) {

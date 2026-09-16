@@ -185,7 +185,7 @@ Unit tests prove the loop, the tools and the guard rails. They cannot
 prove what the real model does with a real caller, which is where nearly
 every serious bug in this project was found. So there are two layers.
 
-**450 unit tests**, run with no API key and no network:
+**478 unit tests**, run with no API key and no network:
 
 ```bash
 python -m pytest -q
@@ -262,6 +262,25 @@ Then open http://localhost:7861, press Start call, and allow the microphone.
 The call list on the page places outbound reminder calls: press Answer to
 play the person picking up.
 
+**Share it with other people.** A Cloudflare quick tunnel gives the local
+server a public HTTPS address, free and with no account:
+
+```bash
+winget install --id Cloudflare.cloudflared
+cloudflared tunnel --url http://localhost:7861 --protocol http2
+```
+
+`--protocol http2` matters on networks that block outbound UDP, which
+includes many offices. The default QUIC connection to Cloudflare runs over
+UDP there, and dropped every call after a minute or two. The address
+changes each time the tunnel starts, and the link works only while the
+machine running the server is awake.
+
+Each tester gets their own copy of the fake patients and their own
+transcript, kept by a random id in their browser, so people can test at
+the same time without taking each other's slots. **Reset my demo data** on
+the page puts theirs back as it started.
+
 **Check the setup.**
 
 ```bash
@@ -317,10 +336,11 @@ src/sophia/
   providers.py      Gemini and Groq behind one interface
   outbound.py       Reminder calls, and what may be known before verification
   voice_app.py      The voice pipeline, turn taking and the web server
+  sessions.py       A private copy of the demo data per tester
   web_audio.py      The wire format for call audio
 evals/              The scenario suite: framework and scripted calls
 scripts/            init_db, chat, check_setup, list_models, run_evals
-tests/              450 unit tests
+tests/              478 unit tests
 web/                The call page, transcript and outbound call list
 docs/               Engineering log, evaluation results, architecture diagram
 ```
@@ -399,8 +419,9 @@ limits of the demo, written down rather than hidden.
   the primary alone unless run with `--fallback`.
 - **No real telephony.** Calls run in a browser. A real phone number costs
   money and proves nothing extra in a demo.
-- **One shared demo database.** Everyone testing at once shares the same
-  fake patients, so one tester's booking takes a slot from the next.
+- **Demo sessions live on one laptop.** Each tester's data is a copy of
+  the seeded database, kept for as long as the server runs. A restart, or
+  more than a hundred testers, starts people again from fresh data.
 - **Not a production system.** Health data is special category data under
   UK GDPR. A real deployment would need a data processing agreement, UK
   hosting, retention rules, human clinical oversight and an audited safety

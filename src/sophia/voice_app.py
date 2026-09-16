@@ -14,13 +14,15 @@ Keeping the logic somewhere it can be tested in silence means anything
 that goes wrong in here is an audio problem, which narrows it enormously.
 
     browser mic
-        -> WebRTC transport
+        -> WebSocket, raw 16 kHz PCM   (web_audio.py; WebRTC kept for local use)
         -> voice activity detection
         -> Deepgram speech to text, UK English
-        -> SophiaVoiceProcessor  (calls the existing agent)
+        -> SophiaVoiceProcessor  (turn taking, interruptions, calls the agent)
         -> Deepgram text to speech, British voice
-        -> WebRTC transport
+        -> WebSocket
         -> browser speaker
+
+Each tester gets their own database and transcript, see sessions.py.
 
 No phone number anywhere, which is what keeps this free.
 """
@@ -29,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import asynccontextmanager
 import re
 import time
 from typing import Callable
@@ -67,7 +70,7 @@ from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketTransport,
 )
 
-from . import config, db, outbound, prompts, providers, web_audio
+from . import config, db, outbound, prompts, providers, sessions, web_audio
 from .agent_text import SophiaAgent
 
 
@@ -345,6 +348,7 @@ def build_pipeline(
     on_event: Callable[[dict], None] | None = None,
     sample_rate: int | None = None,
     reminder_id: int | None = None,
+    db_path=None,
 ) -> tuple[PipelineTask, SophiaAgent]:
     """
     Assemble one call around whichever transport carries the audio.
@@ -354,11 +358,12 @@ def build_pipeline(
     separation that kept every rule out of this file in the first place.
 
     A fresh database connection and a fresh agent per call, so verification
-    state can never leak from one caller to the next.
+    state can never leak from one caller to the next. db_path is the
+    tester's own database, see sessions.py.
     """
     # Opened here on the event loop thread, used from worker threads by
     # agent.say. SophiaVoiceProcessor's lock keeps it to one turn at a time.
-    conn = db.connect(shared_across_threads=True)
+    conn = db.connect(db_path, shared_across_threads=True)
 
     # An outbound reminder call when a reminder is given: Sophia speaks
     # first as if she had rung the patient.
@@ -497,12 +502,22 @@ def _aiortc_ice_servers() -> list[RTCIceServer]:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Sophia")
-    app.state.events = []
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        app.state.sessions.clear_leftovers()
+        yield
+
+    app = FastAPI(title="Sophia", lifespan=lifespan)
+    app.state.sessions = sessions.SessionStore()
 
     @app.get("/")
     async def index():
-        return FileResponse(config.ROOT_DIR / "web" / "index.html")
+        # no-cache: the page and the server change together. A browser that
+        # kept an older page sent no session id after sessions were added,
+        # and its transcript would have stayed empty.
+        return FileResponse(
+            config.ROOT_DIR / "web" / "index.html", headers={"Cache-Control": "no-cache"}
+        )
 
     @app.get("/api/health")
     async def health():
@@ -530,16 +545,24 @@ def create_app() -> FastAPI:
         return {"iceServers": config.ice_servers()}
 
     @app.get("/api/reminders")
-    async def reminders():
+    async def reminders(session: str | None = None):
         """The outbound call list, for the practice side of the demo page."""
-        conn = db.connect()
+        store = app.state.sessions
+        conn = db.connect(store.database(store.get(session)))
         try:
             return {"calls": outbound.pending(conn)}
         finally:
             conn.close()
 
+    @app.post("/api/reset")
+    async def reset(session: str | None = None):
+        """Put this tester's patients and appointments back as they started."""
+        store = app.state.sessions
+        store.reset(store.get(session))
+        return {"status": "reset"}
+
     @app.get("/api/events")
-    async def events(after: int = 0):
+    async def events(after: int = 0, session: str | None = None):
         """
         Everything said so far, for the live transcript in the browser.
 
@@ -547,10 +570,14 @@ def create_app() -> FastAPI:
         is a demo panel beside the call, not the call itself, and polling
         cannot fail in a way that affects the audio.
         """
-        return {"events": app.state.events[after:], "total": len(app.state.events)}
+        # Only a known session has a transcript. An unknown id is not given
+        # a session here, or every poll from a stale page would create one.
+        known = app.state.sessions.find(session)
+        events = known.events if known else []
+        return {"events": events[after:], "total": len(events)}
 
     @app.post("/api/offer")
-    async def offer(body: Offer):
+    async def offer(body: Offer, session: str | None = None):
         if not config.SPEECH.deepgram_api_key:
             return JSONResponse(
                 status_code=503,
@@ -559,7 +586,9 @@ def create_app() -> FastAPI:
                 },
             )
 
-        app.state.events = []
+        store = app.state.sessions
+        caller = store.get(session)
+        caller.events.clear()
 
         # Without TURN here, the server offers only candidates on its own
         # network, which a caller anywhere else cannot reach. The call
@@ -568,13 +597,13 @@ def create_app() -> FastAPI:
         await connection.initialize(sdp=body.sdp, type=body.type)
 
         def record(event: dict) -> None:
-            app.state.events.append(event)
+            store.record(caller, event)
 
         transport = SmallWebRTCTransport(
             webrtc_connection=connection,
             params=TransportParams(audio_in_enabled=True, audio_out_enabled=True),
         )
-        task, _agent = build_pipeline(transport, on_event=record)
+        task, _agent = build_pipeline(transport, on_event=record, db_path=store.database(caller))
 
         # The call runs for as long as the browser stays connected. It is
         # deliberately not awaited here, because this request has to return
@@ -584,7 +613,9 @@ def create_app() -> FastAPI:
         return connection.get_answer()
 
     @app.websocket("/ws")
-    async def call_over_websocket(websocket: WebSocket, reminder: int | None = None):
+    async def call_over_websocket(
+        websocket: WebSocket, reminder: int | None = None, session: str | None = None
+    ):
         """
         A call carried entirely over one WebSocket.
 
@@ -602,10 +633,12 @@ def create_app() -> FastAPI:
             await websocket.close()
             return
 
-        app.state.events = []
+        store = app.state.sessions
+        caller = store.get(session)
+        caller.events.clear()
 
         def record(event: dict) -> None:
-            app.state.events.append(event)
+            store.record(caller, event)
 
         transport = FastAPIWebsocketTransport(
             websocket=websocket,
@@ -622,7 +655,11 @@ def create_app() -> FastAPI:
             ),
         )
         task, _agent = build_pipeline(
-            transport, on_event=record, sample_rate=web_audio.SAMPLE_RATE, reminder_id=reminder
+            transport,
+            on_event=record,
+            sample_rate=web_audio.SAMPLE_RATE,
+            reminder_id=reminder,
+            db_path=store.database(caller),
         )
 
         # Unlike the WebRTC offer, this request IS the call, so it is

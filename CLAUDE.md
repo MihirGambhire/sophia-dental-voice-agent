@@ -220,10 +220,11 @@ src/sophia/
   providers.py  Gemini and Groq adapters, retries
   outbound.py   reminder and recall calls
   voice_app.py  Pipecat pipeline, turn taking, web server
+  sessions.py   per tester database copy and transcript
   web_audio.py  PCM wire format for the WebSocket
 evals/          live scenario suite, framework and scenarios
 scripts/        init_db, chat, check_setup, list_models, run_evals
-tests/          450 tests, no API key needed
+tests/          478 tests, no API key needed
 web/            call page
 ```
 

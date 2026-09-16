@@ -849,6 +849,43 @@ it does.
 
 ---
 
+### 31. Testers shared one database, and one transcript
+
+**Found by reading the code, before it bit.** Two things on the shared
+link were global. Every caller used the same database, so one tester's
+booking took the slot the next tester had been told to book, and the demo
+needed resetting by hand between people. Worse, the live transcript was a
+single list, emptied whenever any call started. Two friends calling at the
+same time would each have had their transcript wiped by the other's call,
+and then watched the other's conversation appear on their screen. With
+fake data that is confusing rather than a privacy breach, but it is the
+exact shape of one: the kind of bug that matters once the data is real.
+
+**Fix.** The page keeps a random session id in the browser. Each id gets
+its own copy of a freshly seeded database and its own transcript, so a
+tester can book on one call and cancel on the next without affecting
+anyone. A reset button restores their data. The id becomes a file name,
+so it is checked strictly, and anything malformed gets a throwaway session
+rather than a path. The template is rebuilt when the date changes, since
+seed data is relative to the day it was built.
+
+**Two smaller catches on the way.**
+
+- Clearing leftover session files was first done in the store's
+  constructor. The web app is built when its module is imported, so any
+  test importing it would have deleted the files of a server running at
+  the time. It now happens only on server startup.
+- The browser in testing kept serving the old page from cache, which sent
+  no session id, so its transcript would have stayed blank. Anyone who
+  had opened the old link would have seen the same. The page is now
+  served with `Cache-Control: no-cache`.
+
+**Verified** by a real call over the WebSocket with a session id: the
+greeting audio arrived, the transcript appeared under that id only, a
+second id saw nothing, and a reset cleared it.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns
