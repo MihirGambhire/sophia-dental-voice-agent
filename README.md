@@ -12,7 +12,7 @@ takes a message when she cannot help.
 She runs entirely on free tiers and open source. Total cost to build and
 run: nothing.
 
-**Status: in progress.** Day 1 of an 8 day build. See [Progress](#progress).
+**Status: in progress.** Day 2 of an 8 day build. See [Progress](#progress).
 
 ---
 
@@ -168,9 +168,15 @@ src/sophia/
   config.py         Every business constant and model name in one place
   clock.py          Opening hours, the 8am urgent release, spoken UK dates, BST handling
   db.py             SQLite schema and the seeder
+  policies.py       The business rules, as pure tested functions
+  tools.py          What the model may call, and everything it may not
+  schemas.py        Tool definitions sent to the model
+  prompts.py        Sophia's system prompt, deliberately short
+  agent_text.py     The conversation loop
 scripts/
   init_db.py        Rebuild the demo database from scratch
-tests/              Schema, seed integrity and time handling, so far
+  chat.py           Talk to Sophia in the terminal
+tests/              205 tests: schema, time, policy, tools, conversation loop
 docs/               Architecture diagram
 ```
 
@@ -186,11 +192,26 @@ python -m venv .venv
 pip install -r requirements.txt
 copy .env.example .env
 python scripts/init_db.py
-python -m pytest tests/ -q
+python -m pytest -q
 ```
 
-`.env` needs no keys for the data layer or the tests. Keys are only needed
-once the agent itself runs.
+The whole test suite runs with no API key at all, because the conversation
+tests use a scripted stand in for the model rather than calling one.
+
+To actually talk to her you need a free Groq key in `.env`, then:
+
+```bash
+python scripts/chat.py --show-tools
+```
+
+`--show-tools` prints every tool call and its arguments, which is the
+quickest way to see that the model is not inventing anything. `--at` pins
+the clock, so you can demonstrate the 8am urgent release or the lunch
+closure without waiting for one:
+
+```bash
+python scripts/chat.py --at "2026-09-21 07:45"
+```
 
 On Windows, `tzdata` is required and is in `requirements.txt`. Windows has
 no system IANA timezone database, so `Europe/London` is otherwise
@@ -273,7 +294,7 @@ contradictory, written down rather than hidden.
 | Day | Goal | Status |
 |---|---|---|
 | 1 | Repo, clinic data, SQLite schema and seed | Done |
-| 2 | Text agent with tool calling against SQLite | Not started |
+| 2 | Text agent with tool calling against SQLite | Done |
 | 3 | Policy logic, FAQ retrieval, safety escalation | Not started |
 | 4 | Voice layer, browser call end to end | Not started |
 | 5 | Voice polish, interruptions, latency | Not started |
@@ -293,6 +314,36 @@ have actually passed. Since 24 hours is exactly the line between a normal
 cancellation and a Short Notice Cancellation, that would have mis-judged
 real cancellations every October. Fixed by converting to UTC before
 subtracting, with the reason written into the code.
+
+---
+
+**Day 2 result:** 205 tests passing. Twelve tools over the database, the
+policy engine, and a conversation loop with a terminal client.
+
+The tool layer is where the safety argument actually lives, so it is worth
+being concrete about what it refuses. Every patient tool raises rather than
+answers if the caller has not been verified, and that is one `if` statement
+in Python rather than an instruction in a prompt, so no amount of
+persuasion in the conversation gets past it. A failed identity check gives
+the same reply whether the patient does not exist or the postcode was
+wrong, because saying "the postcode is right" would confirm real data to
+someone who just failed a check. Asking about an appointment that belongs
+to someone else returns the identical error to asking about one that does
+not exist. Cancelling refuses outright unless an explicit confirmation flag
+is set, which forces the warning to be given before the record is touched,
+not after. Booking re-validates the slot at the moment of writing, so a
+time that was free when it was offered but has since gone is rejected
+rather than double booked. And a slot in the lunch hour, at the weekend, in
+the past, or with a clinician who does not work that day is refused even if
+it is requested directly.
+
+One bug worth recording. Slots were being offered four at a time from the
+same morning, because the search loop stopped once it had collected enough
+individual slots, and a single morning yields dozens. It never looked at a
+second day. The fix was to count days with availability rather than slots.
+Worth noting because the code was not wrong in any way a unit test of the
+function alone would have caught, only in a way that made the conversation
+useless.
 
 ---
 
