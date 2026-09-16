@@ -249,14 +249,65 @@ STUN_URLS = tuple(
 )
 
 
+# Metered issue short lived TURN credentials from a REST endpoint rather
+# than handing out fixed ones, so the app name and API key are what get
+# configured, and the actual username and password are fetched per call.
+METERED_APP_NAME = _env("METERED_APP_NAME", "")
+METERED_API_KEY = _env("METERED_API_KEY", "")
+
+# Credentials last hours, not seconds, so refetching on every single call
+# would just be a slow way to get the same answer.
+_METERED_CACHE: dict[str, object] = {"servers": None, "fetched_at": 0.0}
+_METERED_CACHE_SECONDS = 1800
+
+
+def _metered_ice_servers() -> list[dict]:
+    """
+    Fetch relay credentials from Metered, or return nothing if unavailable.
+
+    Never raises. A failure here must degrade to a call that works locally,
+    not to a server that will not start.
+    """
+    if not (METERED_APP_NAME and METERED_API_KEY):
+        return []
+
+    import json
+    import time
+    import urllib.request
+
+    cached = _METERED_CACHE["servers"]
+    if cached and (time.time() - float(_METERED_CACHE["fetched_at"])) < _METERED_CACHE_SECONDS:
+        return list(cached)  # type: ignore[arg-type]
+
+    url = (
+        f"https://{METERED_APP_NAME}.metered.live/api/v1/turn/credentials"
+        f"?apiKey={METERED_API_KEY}"
+    )
+    try:
+        with urllib.request.urlopen(url, timeout=10) as response:
+            servers = json.load(response)
+        if not isinstance(servers, list) or not servers:
+            return []
+        _METERED_CACHE["servers"] = servers
+        _METERED_CACHE["fetched_at"] = time.time()
+        return servers
+    except Exception:  # noqa: BLE001
+        return list(cached) if cached else []  # type: ignore[arg-type]
+
+
 def ice_servers() -> list[dict]:
     """
     The ICE servers both ends should use, in the browser's own format.
 
     Served to the page from /api/ice so the two sides can never disagree
     about how to connect.
+
+    Order of preference: explicit TURN_URLS if set, otherwise Metered if
+    configured, otherwise STUN alone, which only works when the browser
+    and the server are on the same machine.
     """
     servers: list[dict] = [{"urls": list(STUN_URLS)}]
+
     if TURN_URLS:
         servers.append(
             {
@@ -265,6 +316,16 @@ def ice_servers() -> list[dict]:
                 "credential": TURN_CREDENTIAL,
             }
         )
+        return servers
+
+    servers.extend(_metered_ice_servers())
     return servers
+
+
+def turn_configured() -> bool:
+    """True if any relay is available, which is what remote calls need."""
+    if TURN_URLS:
+        return True
+    return bool(_metered_ice_servers())
 
 LOG_LEVEL = _env("LOG_LEVEL", "INFO")

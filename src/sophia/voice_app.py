@@ -219,7 +219,7 @@ def create_app() -> FastAPI:
             "model": config.LLM.model,
             "voice": config.SPEECH.tts_voice,
             "speech_configured": bool(config.SPEECH.deepgram_api_key),
-            "turn_configured": bool(config.TURN_URLS),
+            "turn_configured": config.turn_configured(),
         }
 
     @app.get("/api/ice")
