@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
+import time
 from typing import Callable
 
 from fastapi import FastAPI, WebSocket
@@ -39,6 +41,8 @@ from pydantic import BaseModel
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from loguru import logger
 from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
+    BotStoppedSpeakingFrame,
     EndFrame,
     Frame,
     InterimTranscriptionFrame,
@@ -84,13 +88,42 @@ FAILURE_REPLY = (
 )
 
 
+# Interruptions.
+#
+# Until now the browser muted the microphone while Sophia spoke, so a phone
+# speaker could not feed her own voice back into her. That also meant
+# nobody could talk over her, which every tester tried within a minute,
+# because that is how people behave on the phone.
+#
+# The microphone now stays open. The risk is echo: her voice coming out of
+# a speaker and back in through the microphone looks exactly like a caller
+# interrupting, and she would cut herself off mid sentence. Browser echo
+# cancellation helps but differs between phones, so it is not relied on.
+# Instead, anything transcribed while she is speaking, or shortly after, is
+# compared with the words she is actually saying. If it is her words, it is
+# her echo and is ignored.
+#
+# A real interruption also has to be more than a noise: at least two words
+# that are not hers, or one of the short words people use to cut in.
+ECHO_TAIL_SECS = 2.5
+INTERRUPT_MIN_WORDS = 2
+INTERRUPT_WORDS = frozenset(
+    {"stop", "wait", "sorry", "hang", "hold", "no", "excuse", "pardon", "actually", "sophia"}
+)
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9']+", (text or "").lower())
+
+
 class SophiaVoiceProcessor(FrameProcessor):
     """
     Speech in, speech out, one complete caller turn at a time.
 
     Everything Sophia decides is delegated to the agent that already
-    exists. This class only decides when the caller has finished speaking,
-    and makes sure turns reach the agent strictly one after another.
+    exists. This class decides when the caller has finished speaking, when
+    the caller is genuinely talking over Sophia rather than hearing her
+    echo, and makes sure turns reach the agent strictly one after another.
     """
 
     def __init__(
@@ -112,29 +145,126 @@ class SophiaVoiceProcessor(FrameProcessor):
         # across worker threads, which is only safe if turns never overlap.
         self._turn_lock = asyncio.Lock()
 
+        # What Sophia is saying, so her own echo can be recognised.
+        self._bot_speaking = False
+        self._bot_text = ""
+        self._echo_until = 0.0
+
+    # Overridable in tests, so the echo window does not depend on real time.
+    def _now(self) -> float:
+        return time.monotonic()
+
+    def set_spoken_text(self, text: str) -> None:
+        """
+        Register what Sophia is about to say.
+
+        Every reply passes through here, and so must anything spoken from
+        elsewhere, like the greeting. Without it, her own greeting echoing
+        back through a phone speaker would be taken as the caller speaking.
+        """
+        self._bot_text = text or ""
+        # Held open until she stops speaking, which normally resets it to a
+        # short tail. Capped, so a reply that never produces audio cannot
+        # leave every later caller sentence being checked against it.
+        self._echo_until = self._now() + 30.0
+
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
 
-        if isinstance(frame, VADUserStartedSpeakingFrame):
-            # Still talking: whatever was heard so far is not a full turn.
-            self._caller_speaking = True
-            self._cancel_flush()
+        if isinstance(frame, BotStartedSpeakingFrame):
+            self._bot_speaking = True
+        elif isinstance(frame, BotStoppedSpeakingFrame):
+            self._bot_speaking = False
+            # Her last words are still travelling: out of the speaker, into
+            # the microphone, through the network and speech to text.
+            self._echo_until = self._now() + ECHO_TAIL_SECS
+        elif isinstance(frame, VADUserStartedSpeakingFrame):
+            # Inside the echo window, voice activity alone could be Sophia
+            # herself, so only transcribed words decide whether the caller
+            # is talking.
+            if not self._in_echo_window():
+                self._caller_speaking = True
+                self._cancel_flush()
         elif isinstance(frame, VADUserStoppedSpeakingFrame):
             self._caller_speaking = False
             if self._pending:
                 self._schedule_flush()
         elif isinstance(frame, InterimTranscriptionFrame):
-            # Words are still arriving, which is the same signal.
-            self._cancel_flush()
+            text = (frame.text or "").strip()
+            if text and not self._is_echo(text):
+                # Words are still arriving, so the turn is not over.
+                self._cancel_flush()
+                if self._bot_speaking and self._is_barge_in(text):
+                    await self._interrupt(text)
         elif isinstance(frame, TranscriptionFrame):
             text = (frame.text or "").strip()
             if text:
+                if self._is_echo(text):
+                    logger.debug(f"Ignoring Sophia's own echo: {text!r}")
+                    return
+                if self._bot_speaking and self._is_barge_in(text):
+                    await self._interrupt(text)
                 self._pending.append(text)
                 if not self._caller_speaking:
                     self._schedule_flush()
                 return
 
         await self.push_frame(frame, direction)
+
+    # -- telling a real interruption from echo ----------------------------
+
+    def _in_echo_window(self) -> bool:
+        return self._bot_speaking or self._now() < self._echo_until
+
+    def _is_echo(self, text: str) -> bool:
+        """
+        True if this transcript is Sophia's own voice coming back.
+
+        Short fragments must be entirely her words. Longer ones only mostly,
+        because speech to text will not reproduce her sentence exactly.
+        Outside the window nothing is echo, so a caller repeating a phrase
+        she used a minute ago is still heard.
+        """
+        if not self._in_echo_window():
+            return False
+        said = _words(text)
+        if not said:
+            return True
+        hers = set(_words(self._bot_text))
+        if not hers:
+            return False
+        overlap = sum(word in hers for word in said) / len(said)
+        return overlap == 1.0 if len(said) <= 2 else overlap >= 0.7
+
+    @staticmethod
+    def _is_barge_in(text: str) -> bool:
+        words = _words(text)
+        return len(words) >= INTERRUPT_MIN_WORDS or any(w in INTERRUPT_WORDS for w in words)
+
+    async def _interrupt(self, heard: str) -> None:
+        """Stop Sophia mid sentence because the caller is talking."""
+        if not self._bot_speaking:
+            return
+        self._bot_speaking = False
+        self._echo_until = self._now() + ECHO_TAIL_SECS
+        interrupted_reply = self._bot_text
+        logger.info(f"Caller interrupted Sophia: {heard!r}")
+        self.on_event({"type": "interrupted", "text": heard})
+
+        # Clears her queued speech in the text to speech service and the
+        # output transport, and the serializer tells the browser to stop
+        # playing what it already has.
+        await self.broadcast_interruption()
+
+        # The model believes it said the whole reply. Telling it otherwise
+        # stops it assuming the caller heard, say, a fee they never heard.
+        task = asyncio.create_task(self._note_interrupted(interrupted_reply))
+        self._turn_tasks.add(task)
+        task.add_done_callback(self._turn_tasks.discard)
+
+    async def _note_interrupted(self, reply: str) -> None:
+        async with self._turn_lock:
+            self.agent.note_interrupted(reply)
 
     # -- deciding when the caller has finished ----------------------------
 
@@ -177,6 +307,7 @@ class SophiaVoiceProcessor(FrameProcessor):
                 self.on_event(
                     {"type": "error", "text": "Something went wrong on our side."}
                 )
+                self.set_spoken_text(FAILURE_REPLY)
                 await self.push_frame(TTSSpeakFrame(FAILURE_REPLY))
                 return
 
@@ -189,6 +320,7 @@ class SophiaVoiceProcessor(FrameProcessor):
                     "seconds": round(turn.latency_seconds, 2),
                 }
             )
+            self.set_spoken_text(turn.reply)
             await self.push_frame(TTSSpeakFrame(turn.reply))
 
     async def wait_idle(self) -> None:
@@ -272,6 +404,7 @@ def build_pipeline(
         """Sophia speaks first, as a receptionist does."""
         if on_event:
             on_event({"type": "sophia", "text": prompts.GREETING, "tools": []})
+        sophia.set_spoken_text(prompts.GREETING)
         await task.queue_frames([TTSSpeakFrame(prompts.GREETING)])
 
     @transport.event_handler("on_client_disconnected")

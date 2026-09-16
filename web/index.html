@@ -161,6 +161,14 @@ function render(events) {
       showError(event.text);
       continue;
     }
+    if (event.type === 'interrupted') {
+      const note = document.createElement('div');
+      note.className = 'meta';
+      note.style.margin = '-6px 0 12px';
+      note.textContent = 'Sophia stopped talking because you interrupted';
+      transcriptEl.appendChild(note);
+      continue;
+    }
     const div = document.createElement('div');
     let cls = 'turn ' + (event.type === 'caller' ? 'caller' : 'sophia');
     if (event.safety === 'emergency_999') cls += ' emergency';
@@ -309,11 +317,11 @@ callBtn.onclick = async () => {
       micNode = new AudioWorkletNode(ctx, 'capture');
       micNode.port.onmessage = event => {
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        // Do not send the microphone while Sophia is talking. On a phone
-        // speaker she would otherwise hear herself, transcribe it, and
-        // answer her own sentence. The cost is that she cannot be talked
-        // over yet, which is the next thing to improve.
-        if (ctx.currentTime < playHead + 0.25) return;
+        // The microphone stays open while Sophia talks, so the caller can
+        // interrupt her. It used to be muted during her speech to stop a
+        // phone speaker feeding her own voice back in. The server now
+        // recognises her echo by comparing what it hears with what she is
+        // saying, so muting is no longer needed.
         ws.send(event.data);
       };
       source.connect(micNode);

@@ -624,6 +624,42 @@ test now completes a booking, which touches every layer at once.
 
 ---
 
+### 24. Letting callers interrupt, without Sophia interrupting herself
+
+**Symptom.** Testers could not talk over Sophia. The microphone was muted
+while she spoke, deliberately, so a phone speaker could not feed her voice
+back in. But everyone tries to cut in on a phone call within a minute.
+
+**The real problem was echo, not interruption.** Stopping her is one call,
+`broadcast_interruption()`, which clears her queued speech, and the
+serializer already told the browser to drop audio it had queued. The hard
+part is that with the microphone open, her own voice returning through a
+speaker looks exactly like a caller interrupting. Browser echo
+cancellation varies between phones, so it is not relied on.
+
+**Fix.** Everything transcribed while she speaks, and for 2.5 seconds
+after, is compared with the words she is actually saying. Mostly her words
+means echo: ignored for interruption, and never turned into a caller turn.
+A genuine interruption needs two words that are not hers, or one of the
+short words people cut in with, so a cough or "mm" does not stop her. The
+greeting is registered too, because it is spoken from outside the
+processor and its echo would otherwise be the first thing a caller "said".
+The agent is also told which reply was cut off, so it does not assume the
+caller heard a fee they never heard.
+
+**Verified live over the public link.** Her greeting was fed back into the
+call as it arrived, 350 milliseconds late and at half volume, to imitate a
+phone speaker. The logs show all six fragments were transcribed and each
+was rejected as echo: no interruption, no reply to herself. Then a caller
+talked over her answer about opening hours; the browser was told to stop
+playback 0.96 seconds later, and she answered the new question correctly.
+
+**Lesson.** Checking the logs mattered. A passing echo test could have
+meant the echo was too quiet to be transcribed at all, in which case the
+filter proved nothing. It was transcribed in full, and rejected.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns

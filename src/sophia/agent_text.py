@@ -376,6 +376,21 @@ class SophiaAgent:
         self._compact_history()
         return record
 
+    def note_interrupted(self, reply: str) -> None:
+        """
+        Record that the caller cut this reply off before it finished.
+
+        The model otherwise assumes every word it produced was heard, and
+        may later refer to a fee or a time the caller never got to hear.
+        Matched by content because further turns may already have been
+        added after it.
+        """
+        marker = " [The caller interrupted before this finished, so they may not have heard all of it.]"
+        for message in reversed(self.messages):
+            if message.get("role") == "assistant" and message.get("content") == reply:
+                message["content"] = reply + marker
+                return
+
     def _correct_false_claims(self, reply: str) -> str | None:
         """
         Replace a reply that claims something the call state says did not happen.

@@ -571,3 +571,13 @@ def test_the_voice_connection_can_be_used_from_another_thread(tmp_path):
 
     assert "error" not in outcome, outcome.get("error")
     assert outcome["n"] > 0
+
+
+def test_an_interrupted_reply_is_marked_in_the_history(conn):
+    agent = agent_with(conn, [text_response("The fee is twenty seven pounds ninety.")])
+    agent.say("how much is a check up")
+
+    agent.note_interrupted("The fee is twenty seven pounds ninety.")
+
+    assert "interrupted" in agent.messages[-1]["content"]
+    assert agent.messages[-1]["content"].startswith("The fee is twenty seven pounds ninety.")

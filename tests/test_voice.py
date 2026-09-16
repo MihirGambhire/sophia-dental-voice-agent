@@ -15,12 +15,15 @@ No microphone, no network, no Deepgram key needed.
 """
 
 import asyncio
+from pathlib import Path
 from datetime import date, time
 from types import SimpleNamespace
 
 import pytest
 
 from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
+    BotStoppedSpeakingFrame,
     Frame,
     InterimTranscriptionFrame,
     TextFrame,
@@ -44,6 +47,9 @@ class FakeAgent:
         self._tools = tools or []
         self._safety = safety
         self._fails = fails
+
+    def note_interrupted(self, reply):
+        self.interrupted_replies = getattr(self, "interrupted_replies", []) + [reply]
 
     def say(self, text):
         self.heard.append(text)
@@ -428,3 +434,181 @@ def test_the_web_page_exists_and_carries_the_disclaimer():
     assert "Unofficial concept demo" in page
     assert "999" in page
     assert "AI assistant" in page
+
+
+# ---------------------------------------------------------------------------
+# Interruptions, and telling them apart from Sophia's own echo
+# ---------------------------------------------------------------------------
+
+SAYING = "We are open Monday to Friday from eight until six, closed for lunch between one and two."
+
+
+def speaking_processor(agent=None, clock=None):
+    """A processor that believes Sophia is mid sentence, with interruption recorded."""
+    agent = agent or FakeAgent()
+    processor, pushed, events = make_processor(agent)
+    interruptions = []
+
+    async def record_interruption():
+        interruptions.append(True)
+
+    processor.broadcast_interruption = record_interruption
+    if clock is not None:
+        processor._now = lambda: clock["t"]
+    processor.set_spoken_text(SAYING)
+    return agent, processor, pushed, events, interruptions
+
+
+def interim(text):
+    return InterimTranscriptionFrame(text=text, user_id="caller", timestamp="now")
+
+
+def test_the_caller_talking_over_sophia_stops_her():
+    agent, processor, _, events, interruptions = speaking_processor()
+
+    asyncio.run(feed_many(processor, [
+        BotStartedSpeakingFrame(),
+        interim("hang on can I"),
+        transcription("hang on can I ask something else"),
+        VADUserStoppedSpeakingFrame(),
+    ]))
+
+    assert interruptions == [True]
+    assert any(event["type"] == "interrupted" for event in events)
+    assert agent.heard == ["hang on can I ask something else"]
+
+
+def test_her_own_echo_does_not_interrupt_her():
+    """
+    On a phone speaker her voice comes back through the microphone. If that
+    counted as an interruption she would cut herself off mid sentence.
+    """
+    agent, processor, _, events, interruptions = speaking_processor()
+
+    asyncio.run(feed_many(processor, [
+        BotStartedSpeakingFrame(),
+        interim("we are open Monday to Friday"),
+        transcription("We are open Monday to Friday from eight until six"),
+    ]))
+
+    assert interruptions == []
+    assert not any(event["type"] == "interrupted" for event in events)
+
+
+def test_her_own_echo_never_becomes_a_caller_turn():
+    """Otherwise she would answer her own sentence."""
+    agent, processor, _, _, _ = speaking_processor()
+
+    asyncio.run(feed_many(processor, [
+        BotStartedSpeakingFrame(),
+        transcription("closed for lunch between one and two"),
+        BotStoppedSpeakingFrame(),
+    ]))
+
+    assert agent.heard == []
+
+
+def test_echo_arriving_just_after_she_stops_is_still_ignored():
+    clock = {"t": 100.0}
+    agent, processor, _, _, _ = speaking_processor(clock=clock)
+
+    async def run_it():
+        parent = SophiaVoiceProcessor.__mro__[1]
+
+        async def noop(self, frame, direction):
+            return None
+
+        original = parent.process_frame
+        parent.process_frame = noop
+        try:
+            await processor.process_frame(BotStartedSpeakingFrame(), FrameDirection.UPSTREAM)
+            await processor.process_frame(BotStoppedSpeakingFrame(), FrameDirection.UPSTREAM)
+            clock["t"] += 1.5
+            await processor.process_frame(transcription("eight until six"), FrameDirection.DOWNSTREAM)
+            await processor.wait_idle()
+        finally:
+            parent.process_frame = original
+
+    asyncio.run(run_it())
+    assert agent.heard == []
+
+
+def test_the_same_words_later_are_heard_as_the_caller():
+    """Outside the echo window, repeating her phrase is a genuine question."""
+    clock = {"t": 100.0}
+    agent, processor, _, _, _ = speaking_processor(clock=clock)
+
+    async def run_it():
+        parent = SophiaVoiceProcessor.__mro__[1]
+
+        async def noop(self, frame, direction):
+            return None
+
+        original = parent.process_frame
+        parent.process_frame = noop
+        try:
+            await processor.process_frame(BotStartedSpeakingFrame(), FrameDirection.UPSTREAM)
+            await processor.process_frame(BotStoppedSpeakingFrame(), FrameDirection.UPSTREAM)
+            clock["t"] += 10
+            await processor.process_frame(transcription("closed for lunch between one and two"), FrameDirection.DOWNSTREAM)
+            await processor.wait_idle()
+        finally:
+            parent.process_frame = original
+
+    asyncio.run(run_it())
+    assert agent.heard == ["closed for lunch between one and two"]
+
+
+def test_a_single_noise_word_does_not_cut_her_off():
+    agent, processor, _, _, interruptions = speaking_processor()
+
+    asyncio.run(feed_many(processor, [BotStartedSpeakingFrame(), interim("mm")]))
+
+    assert interruptions == []
+
+
+@pytest.mark.parametrize("word", ["stop", "wait", "sorry", "actually"])
+def test_a_single_cut_in_word_does_stop_her(word):
+    agent, processor, _, _, interruptions = speaking_processor()
+
+    asyncio.run(feed_many(processor, [BotStartedSpeakingFrame(), interim(word)]))
+
+    assert interruptions == [True]
+
+
+def test_speech_while_she_is_silent_is_not_an_interruption():
+    agent, processor, _, _, interruptions = speaking_processor()
+
+    asyncio.run(feed_many(processor, [
+        BotStoppedSpeakingFrame(),
+        transcription("I would like a completely different appointment"),
+    ]))
+
+    assert interruptions == []
+
+
+def test_the_agent_is_told_which_reply_was_cut_off():
+    agent, processor, _, _, _ = speaking_processor()
+
+    asyncio.run(feed_many(processor, [
+        BotStartedSpeakingFrame(),
+        transcription("sorry which dentist was that"),
+    ]))
+
+    assert agent.interrupted_replies == [SAYING]
+
+
+def test_the_greeting_is_registered_so_its_echo_is_ignored():
+    """
+    The greeting is spoken from outside the processor. If it were not
+    registered, its echo would be the first thing the caller "said".
+    """
+    source = (Path(__file__).resolve().parents[1] / "src" / "sophia" / "voice_app.py").read_text(encoding="utf-8")
+    assert "sophia.set_spoken_text(prompts.GREETING)" in source
+
+
+def test_the_page_no_longer_mutes_the_microphone_while_she_speaks():
+    from sophia import config
+
+    page = (config.ROOT_DIR / "web" / "index.html").read_text(encoding="utf-8")
+    assert "ctx.currentTime < playHead" not in page
