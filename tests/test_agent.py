@@ -18,7 +18,7 @@ import pytest
 
 from sophia import clock
 from sophia.agent_text import MAX_TOOL_ROUNDS, SophiaAgent
-from sophia.schemas import TOOL_SCHEMAS, tool_names
+from sophia.schemas import TOOL_SCHEMAS, estimated_tokens, tool_names
 from sophia.tools import SophiaTools
 
 
@@ -106,10 +106,21 @@ def test_the_tool_surface_stays_small():
     assert len(TOOL_SCHEMAS) <= 12
 
 
-def test_every_tool_has_a_description_that_says_when_to_use_it():
+def test_every_tool_has_a_description():
     for schema in TOOL_SCHEMAS:
-        description = schema["function"]["description"]
-        assert len(description) > 60, f"{schema['function']['name']} is under described"
+        assert schema["function"]["description"].strip()
+
+
+def test_the_tool_schemas_stay_inside_the_token_budget():
+    """
+    The schemas are resent on every turn, so their size is a fixed tax on
+    every request. Groq's free tier allows 8000 tokens per minute. When
+    this file cost 1719 tokens, a conversation was throttled after about
+    four turns, which showed up as 20 to 90 second stalls mid call.
+    """
+    assert estimated_tokens() < 1200, (
+        "tool schemas have grown, which will throttle the free tier mid conversation"
+    )
 
 
 def test_required_parameters_are_all_declared():
@@ -160,8 +171,7 @@ def test_a_tool_call_is_run_and_the_result_fed_back(conn):
     assert turn.tools_used == ["verify_patient"]
     assert agent.tools.verified_patient_id == row["id"]
 
-    tool_messages = [m for m in agent.messages if m["role"] == "tool"]
-    assert json.loads(tool_messages[0]["content"])["verified"] is True
+    assert turn.result_for("verify_patient")["verified"] is True
 
 
 def test_several_tools_in_one_turn_all_run(conn):
@@ -208,8 +218,7 @@ def test_a_refused_tool_comes_back_as_an_error_not_a_crash(conn):
     turn = agent.say("Book me in for Monday")
 
     assert turn.reply.startswith("Before I book")
-    tool_messages = [m for m in agent.messages if m["role"] == "tool"]
-    assert "not been verified" in json.loads(tool_messages[0]["content"])["error"]
+    assert "not been verified" in turn.result_for("book_appointment")["error"]
 
 
 def test_an_invented_tool_name_is_handled_gracefully(conn):
@@ -223,8 +232,7 @@ def test_an_invented_tool_name_is_handled_gracefully(conn):
 
     turn = agent.say("Delete all my appointments")
 
-    tool_messages = [m for m in agent.messages if m["role"] == "tool"]
-    assert "no tool called" in json.loads(tool_messages[0]["content"])["error"]
+    assert "no tool called" in turn.result_for("cancel_everything_immediately")["error"]
     assert turn.reply
 
 
@@ -237,10 +245,9 @@ def test_wrong_arguments_are_reported_rather_than_crashing(conn):
         ],
     )
 
-    agent.say("How much is a filling?")
+    turn = agent.say("How much is a filling?")
 
-    tool_messages = [m for m in agent.messages if m["role"] == "tool"]
-    assert "do not fit" in json.loads(tool_messages[0]["content"])["error"]
+    assert "do not fit" in turn.result_for("get_fee")["error"]
 
 
 def test_malformed_tool_arguments_do_not_break_the_turn(conn):
@@ -292,7 +299,7 @@ def test_the_system_prompt_carries_the_current_time_and_open_state(conn):
 
     system = agent.client.requests[0]["messages"][0]["content"]
     assert "Monday the 21st of September" in system
-    assert "closed" in system
+    assert "practice is closed" in system
 
 
 def test_the_system_prompt_knows_when_the_practice_is_open(conn):
@@ -300,7 +307,7 @@ def test_the_system_prompt_knows_when_the_practice_is_open(conn):
     agent.say("hello")
 
     system = agent.client.requests[0]["messages"][0]["content"]
-    assert "currently open" in system
+    assert "practice is open" in system
 
 
 def test_the_call_opens_with_the_ai_and_recording_notice(conn):
@@ -453,12 +460,11 @@ def test_a_cancellation_needs_the_check_step_first(conn):
         when=when,
     )
 
-    agent.say("Daniel Okafor, cancel my appointment")
+    turn = agent.say("Daniel Okafor, cancel my appointment")
 
     still_booked = conn.execute(
         "SELECT status FROM appointments WHERE id = ?", (appointment["id"],)
     ).fetchone()
     assert still_booked["status"] == "booked"
 
-    tool_messages = [m for m in agent.messages if m["role"] == "tool"]
-    assert "not confirmed" in json.loads(tool_messages[1]["content"])["error"]
+    assert "not confirmed" in turn.result_for("cancel_appointment")["error"]

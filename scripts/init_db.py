@@ -12,6 +12,11 @@ data, so every demo run starts from a known, sensible state.
 import sys
 from pathlib import Path
 
+# Windows consoles default to cp1252, which cannot print everything a model
+# might emit. Without this a single unusual character ends the session.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from sophia import clock, config, db  # noqa: E402

@@ -124,6 +124,14 @@ class SophiaTools:
         self._fixed_now = now
         self.verified_patient_id: int | None = None
 
+        # What has happened so far on this call. The agent turns this into
+        # a short state block for the model, so it does not have to
+        # rediscover by calling the same tools again every turn.
+        self.verified_name: str | None = None
+        self.offered_slots: list[dict] = []
+        self.offered_urgent: list[dict] = []
+        self.bookings_made: list[dict] = []
+
     # -- helpers ----------------------------------------------------------
 
     @property
@@ -212,6 +220,7 @@ class SophiaTools:
             ) == _normalise_postcode(postcode)
             if name_matches and postcode_matches:
                 self.verified_patient_id = candidate["id"]
+                self.verified_name = candidate["full_name"]
                 return {
                     "verified": True,
                     "patient_id": candidate["id"],
@@ -397,6 +406,7 @@ class SophiaTools:
 
         found.sort(key=lambda slot: slot.start)
         chosen = _spread(found, limit)
+        self.offered_slots = [slot.as_dict() for slot in chosen]
 
         return {
             "appointment_type": type_row["name"],
@@ -467,6 +477,7 @@ class SophiaTools:
                 ),
             }
 
+        self.offered_urgent = remaining
         return {"released": True, "slots": remaining, "remaining_count": len(remaining)}
 
     # -- 4. booking -------------------------------------------------------
@@ -549,6 +560,15 @@ class SophiaTools:
         self.conn.commit()
 
         fee = policies.format_fee(type_row["fee_gbp"], bool(type_row["fee_is_from"]))
+        self.bookings_made.append(
+            {
+                "appointment_id": cursor.lastrowid,
+                "when": clock.spoken_datetime(start),
+                "clinician": clinician["name"],
+                "type": type_row["name"],
+                "fee": fee,
+            }
+        )
         return {
             "booked": True,
             "appointment_id": cursor.lastrowid,
@@ -623,6 +643,15 @@ class SophiaTools:
         self.conn.commit()
 
         fee = policies.format_fee(type_row["fee_gbp"])
+        self.bookings_made.append(
+            {
+                "appointment_id": appointment_id,
+                "when": clock.spoken_datetime(start),
+                "clinician": "",
+                "type": type_row["name"],
+                "fee": fee,
+            }
+        )
         return {
             "booked": True,
             "appointment_id": appointment_id,

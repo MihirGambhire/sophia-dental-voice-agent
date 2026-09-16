@@ -126,8 +126,18 @@ class LLMSettings:
 
     provider: str = field(default_factory=lambda: _env("LLM_PROVIDER", "groq"))
     groq_api_key: str = field(default_factory=lambda: _env("GROQ_API_KEY", ""))
+    # Checked against the live /models endpoint on 16 September 2026.
+    # llama-3.3-70b-versatile was in Groq's docs but has been retired from
+    # the API, so it is not usable. gpt-oss-120b follows instructions well
+    # and calls tools reliably; gpt-oss-20b is roughly 250ms faster per
+    # turn if latency ever matters more than accuracy.
     groq_model: str = field(
-        default_factory=lambda: _env("GROQ_MODEL", "llama-3.3-70b-versatile")
+        default_factory=lambda: _env("GROQ_MODEL", "openai/gpt-oss-120b")
+    )
+    # Low keeps completion tokens down, which matters because the free
+    # tier is capped on tokens per minute, not on requests.
+    reasoning_effort: str = field(
+        default_factory=lambda: _env("GROQ_REASONING_EFFORT", "low")
     )
     gemini_api_key: str = field(default_factory=lambda: _env("GEMINI_API_KEY", ""))
     gemini_model: str = field(
