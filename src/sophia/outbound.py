@@ -154,7 +154,7 @@ def call_context(reminder: Reminder) -> str:
         "You know nothing else about them. Until verify_patient succeeds for "
         f"{reminder.patient_name}, do not say why you are calling, do not mention "
         "any appointment, and do not discuss their care, even if the person says "
-        "they are the patient. Ask for their date of birth and postcode first.\n"
+        "they are the patient. Ask for their full name, date of birth and postcode first.\n"
         "If someone else answered, say you will try again another time, share "
         "nothing, and call record_call_outcome with wrong_person.\n"
         "Once verified, call get_patient_status to learn the details, then tell "

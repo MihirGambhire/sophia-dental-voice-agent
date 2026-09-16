@@ -102,14 +102,15 @@ def test_the_tool_surface_stays_small():
     """
     CLAUDE.md budgets about nine tools, and the schemas are resent on
     every turn, so this is a free tier and latency constraint rather than
-    tidiness. Thirteen is the agreed ceiling: the twelve original tools
-    plus search_practice_info, which was added after Sophia invented the
-    opening hours because she had nothing to look them up in.
+    tidiness. Fourteen is the agreed ceiling: the twelve original tools,
+    search_practice_info, added after Sophia invented the opening hours
+    because she had nothing to look them up in, and register_new_patient,
+    added because a caller not already on file could not book at all.
 
     The real budget is enforced by the token test below. This one just
     stops the list growing without anyone noticing.
     """
-    assert len(TOOL_SCHEMAS) <= 13
+    assert len(TOOL_SCHEMAS) <= 14
 
 
 def test_every_tool_has_a_description():
@@ -602,3 +603,14 @@ def test_each_turn_records_which_model_answered(conn):
 def test_a_single_fixed_model_records_nothing(conn):
     record = agent_with(conn, [text_response("Hello.")]).say("Hello")
     assert record.models == []
+
+
+def test_the_call_state_says_when_a_new_patient_was_registered(conn):
+    """Otherwise the model sees a verified caller it never verified, and may try again."""
+    agent = agent_with(conn, [])
+    agent.tools.caller_heard = ["Priya Sharma", "fourth of May nineteen ninety", "W A 1 3 B X", "07700 900123"]
+    assert agent.tools.register_new_patient("Priya Sharma", "1990-05-04", "WA1 3BX", "07700 900123")["registered"]
+
+    state = agent._state_block()
+    assert "New patient registered on this call: Priya Sharma" in state
+    assert "Verified caller" not in state

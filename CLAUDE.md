@@ -145,8 +145,9 @@ are not modelled. For anything not in the price table, take a message.
 screening, urgent same day appointments respecting the 8am release,
 honest answers on NHS availability, routine and hygiene booking,
 cancelling and rescheduling with the 24 hour warning, checking an
-appointment after verification, FAQ answers from retrieval, and taking a
-message.
+appointment after verification, FAQ answers from retrieval, registering a
+caller new to the practice as a private patient (never an NHS check up,
+the NHS waiting list is paused), and taking a message.
 
 **Outbound, phase 2:** day before reminders, and recall calls for
 patients approaching the three year lapse. If someone else answers,
@@ -224,7 +225,7 @@ src/sophia/
   web_audio.py  PCM wire format for the WebSocket
 evals/          live scenario suite, framework and scenarios
 scripts/        init_db, chat, check_setup, list_models, run_evals
-tests/          487 tests, no API key needed
+tests/          539 tests, no API key needed
 web/            call page
 ```
 

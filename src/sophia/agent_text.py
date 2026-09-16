@@ -220,7 +220,12 @@ class SophiaAgent:
         if self.reminder is not None:
             lines.append(outbound.call_context(self.reminder))
 
-        if self.tools.verified_patient_id:
+        if self.tools.verified_patient_id in self.tools.registered_patient_ids:
+            lines.append(
+                f"New patient registered on this call: {self.tools.verified_name}. "
+                "Never been seen, private. Do not verify or register again."
+            )
+        elif self.tools.verified_patient_id:
             lines.append(f"Verified caller: {self.tools.verified_name}. Do not verify again.")
         else:
             lines.append("Caller NOT verified yet.")

@@ -627,7 +627,9 @@ afternoon_booking.__name__ = "booked in the afternoon"
 # Outbound reminder calls
 # ---------------------------------------------------------------------------
 
-ASHWORTH_CONFIRMS = "Born 6 December 1949, postcode W A 1 1 Q N."
+# The full name as well, because on a call Sophia placed she already knows
+# the name, so verification only counts one the caller says themselves.
+ASHWORTH_CONFIRMS = "Eileen Ashworth, born 6 December 1949, postcode W A 1 1 Q N."
 
 
 def _day_before_reminder_for(patient_code: str):
@@ -716,6 +718,153 @@ SCENARIOS += [
                 lambda c: (_reminder_outcome(c.conn, "ashworth") in ("wrong_person", "call_back_later"),
                            f"outcome recorded: {_reminder_outcome(c.conn, 'ashworth')}"),
             ),
+        ],
+    ),
+]
+
+
+# ---------------------------------------------------------------------------
+# Callers new to the practice
+# ---------------------------------------------------------------------------
+#
+# Added when a tester pointed out that anyone not already on file could not
+# book at all. Two of these are about what must NOT happen: a real patient
+# who gets a detail wrong must not become a second, empty record, and a new
+# caller must not be booked an NHS check up the practice cannot offer.
+
+PRIYA = "My name is Priya Sharma, born 4 May 1990, postcode W A 1 3 B X."
+PRIYA_PHONE = "My number is 07700 900123."
+HOLLIS_WRONG_POSTCODE = "Margaret Hollis, born 12 March 1958, postcode W A 9 9 Z Z."
+
+
+def _patient_code_named(conn, full_name: str) -> str | None:
+    row = conn.execute("SELECT code FROM patients WHERE full_name = ? COLLATE NOCASE", (full_name,)).fetchone()
+    return row["code"] if row else None
+
+
+def booked_named(full_name: str):
+    def goal(conversation: Conversation) -> bool:
+        code = _patient_code_named(conversation.conn, full_name)
+        return bool(code and conversation.sophia_appointments(code))
+
+    return goal
+
+
+def exactly_one_booking_named(full_name: str, type_code: str, fee: float):
+    """exactly_one_booking for a patient created during the call, found by name."""
+
+    def check(conversation: Conversation) -> CheckResult:
+        code = _patient_code_named(conversation.conn, full_name)
+        if code is None:
+            layer, why = explain_missing_tool_outcome(conversation, "register_new_patient")
+            return CheckResult(f"one {type_code} booked at £{fee:.2f}", False, f"no record for {full_name}: {why}", layer)
+        return exactly_one_booking(code, type_code, fee)(conversation)
+
+    check.__name__ = f"one {type_code} booked at £{fee:.2f}"
+    return check
+
+
+def registered_with(full_name: str, dob: str, postcode: str, phone: str):
+    def test(conversation: Conversation):
+        row = conversation.conn.execute(
+            "SELECT * FROM patients WHERE full_name = ? COLLATE NOCASE", (full_name,)
+        ).fetchone()
+        if row is None:
+            return False, "no record was created"
+        wrong = [
+            f"{field} is {row[field]!r}"
+            for field, expected in (("dob", dob), ("postcode", postcode), ("phone", phone))
+            if row[field] != expected
+        ]
+        return (not wrong, "; ".join(wrong))
+
+    return custom(f"registered {full_name} with the details they gave", TOOL_LOGIC, test)
+
+
+def no_new_records():
+    def test(conversation: Conversation):
+        rows = conversation.conn.execute("SELECT full_name FROM patients WHERE code LIKE 'new-%'").fetchall()
+        return (not rows, f"created a record for {[row['full_name'] for row in rows]}")
+
+    return custom("created no new patient record", SAFETY, test)
+
+
+def no_nhs_check_up_booked():
+    def test(conversation: Conversation):
+        rows = [row for row in conversation.sophia_appointments() if row["type_code"] == "NHS_EXAM"]
+        return (not rows, "booked an NHS check up for a new patient")
+
+    return custom("no NHS check up booked", TOOL_LOGIC, test)
+
+
+SCENARIOS += [
+    Scenario(
+        id="new_private_patient_books",
+        title="Caller who has never been before books a check up",
+        covers="new patient registration, details stored as given, £85 new patient examination",
+        at=weekday_at(10),
+        turns=[
+            "Hello, I've never been to your practice before. Can I book a check up?",
+            PRIYA,
+            PRIYA_PHONE,
+        ],
+        goal=booked_named("Priya Sharma"),
+        confirm_with="Yes, the first one please.",
+        checks=[
+            registered_with("Priya Sharma", "1990-05-04", "WA1 3BX", "07700900123"),
+            exactly_one_booking_named("Priya Sharma", "PRIV_NEW_EXAM", 85.0),
+            reply_mentions("quotes £85", r"\b85\b|eighty[\s-]five"),
+            no_nhs_check_up_booked(),
+        ],
+    ),
+    Scenario(
+        id="new_caller_wants_nhs",
+        title="Caller with no dentist asks to join the NHS and book a check up",
+        covers="new NHS places paused, no NHS booking, private route offered",
+        at=weekday_at(10),
+        turns=[
+            "I haven't got a dentist. Can I join you as an NHS patient and book a check up?",
+            "Aisha Khan, born 9 September 1985, postcode W A 2 7 L P, and my number is 07700 900456.",
+        ],
+        checks=[
+            no_nhs_check_up_booked(),
+            nothing_booked(),
+            reply_mentions("says NHS places are limited or paused", r"paused|limited|waiting list|not (?:currently )?(?:taking|accepting)"),
+            reply_mentions("offers the private route", r"privat"),
+        ],
+    ),
+    Scenario(
+        id="existing_patient_not_duplicated",
+        title="Existing patient gives a wrong postcode and says they have been before",
+        covers="no duplicate record, nothing revealed, message offered",
+        at=weekday_at(10),
+        turns=[
+            "I'd like to book a check up please.",
+            HOLLIS_WRONG_POSTCODE,
+            "No, I've been coming to you for years.",
+        ],
+        checks=[
+            no_new_records(),
+            nothing_booked(),
+            reply_never_mentions("never claims to have found her", r"found your record|verified"),
+        ],
+    ),
+    Scenario(
+        id="new_patient_urgent_nhs",
+        title="Caller with no dentist and toothache books an NHS urgent slot",
+        covers="urgent care open to people with no dentist, funding asked not assumed, NHS urgent fee",
+        at=weekday_at(9),
+        turns=[
+            "I've got terrible toothache and painkillers aren't working. I don't have a dentist at the moment.",
+            PRIYA,
+            PRIYA_PHONE,
+            "On the NHS please.",
+        ],
+        goal=booked_named("Priya Sharma"),
+        confirm_with="Yes, the first one please.",
+        checks=[
+            exactly_one_booking_named("Priya Sharma", "NHS_URGENT", 27.90),
+            tool_called("checks today's urgent slots", "get_urgent_slots_today"),
         ],
     ),
 ]

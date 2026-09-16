@@ -103,9 +103,24 @@ def test_the_patient_themselves_can_be_verified(conn):
     reminder = day_before_reminder(conn)
     agent = outbound_agent(conn, reminder)
     patient = conn.execute("SELECT * FROM patients WHERE id = ?", (reminder.patient_id,)).fetchone()
-    agent.tools.caller_heard.append(f"{patient['dob']} {patient['postcode']}")
+    agent.tools.caller_heard.append(f"{patient['full_name']} {patient['dob']} {patient['postcode']}")
 
     assert agent.tools.verify_patient(patient["full_name"], patient["dob"], patient["postcode"])["verified"]
+
+
+def test_on_a_call_sophia_placed_the_name_must_come_from_the_caller(conn):
+    """
+    Sophia already knows who she rang, so the model can fill the name in
+    itself. Whoever answered has to say it.
+    """
+    reminder = day_before_reminder(conn)
+    agent = outbound_agent(conn, reminder)
+    patient = conn.execute("SELECT * FROM patients WHERE id = ?", (reminder.patient_id,)).fetchone()
+    agent.tools.caller_heard.append(f"Yes, speaking. {patient['dob']} {patient['postcode']}")
+
+    result = agent.tools.verify_patient(patient["full_name"], patient["dob"], patient["postcode"])
+    assert result["verified"] is False
+    assert result["missing"] == ["full name"]
 
 
 # ---------------------------------------------------------------------------

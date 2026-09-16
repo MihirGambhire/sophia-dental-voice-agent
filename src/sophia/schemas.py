@@ -58,8 +58,14 @@ TOOL_SCHEMAS: list[dict] = [
         ["full_name", "dob", "postcode"],
     ),
     _tool(
+        "register_new_patient",
+        "A caller who has never been here, after verify_patient found no match.",
+        {"full_name": _STRING, "dob": _STRING, "postcode": _STRING, "phone": _STRING},
+        ["full_name", "dob", "postcode", "phone"],
+    ),
+    _tool(
         "get_patient_status",
-        "Registration, funding, attendance record and existing bookings.",
+        "Registration, funding, attendance and bookings.",
         {},
         [],
     ),
@@ -105,8 +111,8 @@ TOOL_SCHEMAS: list[dict] = [
     ),
     _tool(
         "check_cancellation",
-        "Call this BEFORE cancelling. Changes nothing. Returns what it would cost the "
-        "patient, which you must tell them before they decide.",
+        "Call BEFORE cancelling. Changes nothing. Tell the caller what it returns "
+        "before they decide.",
         {"appointment_id": _INTEGER},
         ["appointment_id"],
     ),
@@ -134,21 +140,20 @@ TOOL_SCHEMAS: list[dict] = [
     ),
     _tool(
         "search_practice_info",
-        "Practice facts: opening hours, lunch closure, address, parking, registering, "
-        "NHS availability, policies, out of hours numbers. Use it for ANY question "
-        "about the practice. Never answer these from memory.",
-        {"question": {"type": "string", "description": "the caller's question"}},
+        "ANY question about the practice: hours, address, parking, joining, NHS "
+        "places, policies, out of hours. Never answer from memory.",
+        {"question": _STRING},
         ["question"],
     ),
     _tool(
         "get_fee",
-        "Look up a price by appointment type code. Never quote from memory.",
+        "Price by appointment type code. Never quote from memory.",
         {"appointment_type": _STRING},
         ["appointment_type"],
     ),
     _tool(
         "take_message",
-        "Pass anything you cannot handle to the human team. Always better than guessing.",
+        "Anything you cannot handle goes to the team.",
         {
             "caller_name": _STRING,
             "reason": _STRING,

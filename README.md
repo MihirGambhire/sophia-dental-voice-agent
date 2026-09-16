@@ -75,6 +75,15 @@ confirmed before anything is revealed or changed. A mismatch reveals
 nothing, including which detail was wrong. The postcode must be one the
 caller actually said: the model was once caught inventing one.
 
+**New callers welcome.** Someone who has never been to the practice can
+register as a new private patient and book the £85 new patient examination
+on the same call. Every detail must be something they actually said. A
+real patient who gets a detail wrong is not given a second, empty record,
+and the refusal does not confirm they are on the list. New NHS check ups
+are refused honestly, because the practice's NHS waiting list is paused,
+but same day urgent care stays open to people with no dentist, on the NHS
+or privately as they choose. Children are passed to the team.
+
 **Bookings that respect real rules.** New patient versus routine
 examination, the three year registration lapse, NHS bands versus private
 fees, hygienist direct access, the lunch closure, clinician specific
@@ -185,18 +194,19 @@ Unit tests prove the loop, the tools and the guard rails. They cannot
 prove what the real model does with a real caller, which is where nearly
 every serious bug in this project was found. So there are two layers.
 
-**487 unit tests**, run with no API key and no network:
+**539 unit tests**, run with no API key and no network:
 
 ```bash
 python -m pytest -q
 ```
 
-**A scenario suite against the real model**, in `evals/`: 20 scripted calls
+**A scenario suite against the real model**, in `evals/`: 24 scripted calls
 drawn from the practice's real rules, including a booking, the lapsed
 patient fee, urgent slots before and after 8am, a 999 red flag, cancelling
 30 and 5 hours ahead, a wrong date of birth, a medicine question, weekend
-and lunchtime requests, a change of mind, and two outbound reminder calls,
-one answered by someone other than the patient.
+and lunchtime requests, a change of mind, two outbound reminder calls, one
+answered by someone other than the patient, and four calls from people new
+to the practice.
 
 ```bash
 python scripts/run_evals.py --repeat 3
@@ -363,7 +373,7 @@ src/sophia/
   web_audio.py      The wire format for call audio
 evals/              The scenario suite: framework and scripted calls
 scripts/            init_db, chat, check_setup, list_models, run_evals
-tests/              487 unit tests
+tests/              539 unit tests
 web/                The call page, transcript and outbound call list
 docs/               Engineering log, evaluation results, architecture diagram
 ```
@@ -431,6 +441,16 @@ limits of the demo, written down rather than hidden.
   Sophia takes a message rather than guessing.
 - **The NHS website and the practice website disagree on new NHS patients.**
   Sophia answers honestly about limited capacity rather than picking a side.
+- **A lapsed NHS patient is treated as a new NHS patient.** The practice
+  says anyone away more than three years is treated as new, and new NHS
+  places are paused, so Sophia offers a private new patient examination
+  or a callback instead of an NHS check up. Urgent NHS care is unaffected.
+- **Sophia cannot take payment.** The practice takes a new patient's first
+  examination fee at booking, so she tells the caller the team will call to
+  take it.
+- **New registrations are private, and adults only.** A child needs a
+  parent or guardian registered alongside them, which Sophia passes to the
+  team as a message.
 - **Free tier limits.** Gemini's free tier allows 15 requests a minute and
   500 a day per model, and one caller turn with tool calls can be several
   requests. A few simultaneous callers can reach the first; a day of

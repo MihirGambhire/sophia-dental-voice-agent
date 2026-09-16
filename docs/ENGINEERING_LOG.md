@@ -950,6 +950,82 @@ to verification.
 
 ---
 
+### 34. Nobody new could book, and the edge cases behind letting them
+
+**Found by a tester.** "If I give a wrong postcode, Sophia won't book me."
+For an existing patient that was correct: the postcode is one of three
+details proving who they are. But it exposed a real gap. A caller not
+already on file had no way to book at all, which is the one caller a
+receptionist most needs to win. The evaluation plan even listed "a new
+private patient books the £85 examination", and it had never been built.
+
+**What was built.** A `register_new_patient` tool. A caller who has never
+been to the practice gives their name, date of birth, postcode and phone
+number, becomes a new private patient, and books as normal. They are
+verified for their own new record only, which holds nothing but what they
+just said. A mismatch in `verify_patient` now offers this route to
+everyone, which says nothing about why the details did not match.
+
+**Edge cases, and what each one does.** Most were found by walking the
+flow step by step before any caller did; three were real bugs.
+
+- *A detail the caller never said.* The model has invented postcodes
+  before, so the name, postcode and phone number must all appear in the
+  caller's own words. Names are matched fuzzily against everything said
+  run together, so a name spelled out letter by letter is found, and so is
+  "Isai Lee Nashworth" for Eileen Ashworth.
+- *A real patient who got a detail wrong, then says they are new.* That
+  would create a second, empty record with no attendance history, split
+  from their real one. Refused when name and date of birth
+  match anyone, even with a title in front or a misheard spelling, and
+  refused with wording that does not confirm the person is on the list.
+- *A new caller asking for an NHS check up.* New NHS places are paused, so
+  booking one would promise a place the practice does not have. Refused in
+  code, with the private examination or a callback offered. **The same rule
+  exposed a gap for lapsed NHS patients**, who were still being booked
+  NHS check ups although the practice treats anyone away three years as new.
+- *A new caller with toothache.* Urgent care is open to people with no
+  dentist, on the NHS or privately. **Real bug:** the urgent booking took
+  the fee from the patient record alone, and every new record is private,
+  so a caller who asked for NHS urgent care was charged £85 instead of
+  £27.90. The caller's most recent request now decides, and "I haven't got
+  an NHS dentist" is not read as a request.
+- *A date of birth that could be read two ways.* Speech to text has written
+  UK dates month first (entry 33). Verification can try both readings, but
+  a stored record keeps one for good, and a wrong one would fail the new
+  patient on every future call. So an ambiguous numeric date is confirmed
+  by asking, unless the month was said by name, and "May I book?" does not
+  count as saying May.
+- *Titles and capitalisation.* "mrs priya sharma" is stored as "Priya
+  Sharma", and "mary-jane o'neil" as "Mary-Jane O'Neil". A title left in
+  would also weaken the duplicate check.
+- *Children.* A child needs a parent or guardian registered alongside them,
+  so under sixteens become a message for the team.
+- *Placeholders, single names, digits, impossible dates, non UK postcodes
+  and phone numbers* are each refused with a request to repeat, and UK
+  numbers are accepted with or without +44, read as "oh seven double seven".
+- *Outbound calls.* Refused: Sophia rang a known patient.
+- *Repeats and abuse.* The same details twice return the same record, and
+  more than two registrations on one call become a message.
+- *Payment.* The practice takes the first examination fee at booking and
+  Sophia cannot take payment, so she says the team will call to take it.
+
+**One more, found while doing this.** On a call Sophia placed, she already
+knows the patient's name, so the model passed the right name whatever the
+caller said. Verification on those calls now needs the name in the
+caller's own words too.
+
+**Checked.** 52 new tests. Each of the main safeguards was deliberately
+removed in turn to confirm its test fails without it. Against the real
+model, a new private patient booking passed 3 of 3, a new caller asking
+for NHS passed 3 of 3, and the existing patient with a wrong postcode
+passed its first run before the day's quota ran out. The schema for the
+new tool pushed the tool list past its token budget, so several
+descriptions that repeated the prompt were shortened rather than raising
+the budget.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns

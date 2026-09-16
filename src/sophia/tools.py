@@ -23,6 +23,7 @@ model as a tool result.
 from __future__ import annotations
 
 import re
+import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
@@ -92,6 +93,12 @@ def _normalise_name(value: str) -> str:
 def _normalise_postcode(value: str) -> str:
     """Postcodes are compared without spaces or case. "wa1 1qn" matches "WA11QN"."""
     return re.sub(r"\s+", "", (value or "")).casefold()
+
+
+def _format_postcode(compact: str) -> str:
+    """WA11QN becomes WA1 1QN: the inward part is always the last three characters."""
+    compact = compact.upper()
+    return f"{compact[:-3]} {compact[-3:]}"
 
 
 def _normalise_dob(value: str) -> str | None:
@@ -264,6 +271,148 @@ def _funding_was_asked_for(funding: str, utterances: list[str]) -> bool:
     return bool(pattern) and any(pattern.search(said or "") for said in utterances)
 
 
+def _latest_funding_request(utterances: list[str] | None) -> str | None:
+    """
+    NHS or private, whichever the caller asked for most recently, if either.
+
+    Used for urgent bookings, where the fee depends on it and there is no
+    separate step to choose. A mention within a couple of words after "not",
+    "no" or "n't" does not count, so "not private, NHS please" means NHS and
+    "I haven't got an NHS dentist" asks for nothing.
+    """
+    if not utterances:
+        return None
+    text = " | ".join(utterances)
+    found: list[tuple[int, str]] = []
+    for funding, pattern in _FUNDING_WORDS.items():
+        for match in pattern.finditer(text):
+            before = text[max(0, match.start() - 24):match.start()].lower()
+            # "not private", "I don't want NHS", "I haven't got an NHS dentist"
+            if re.search(r"(?:\bnot|\bno|n't)(?:\s+[a-z]+){0,2}\s+$", before):
+                continue
+            found.append((match.start(), funding))
+    return max(found)[1] if found else None
+
+
+_UK_PHONE = re.compile(r"^0\d{10}$")
+
+# New registrations for a child go to the team, see register_new_patient.
+_MINIMUM_AGE_TO_REGISTER = 16
+_MAXIMUM_PLAUSIBLE_AGE = 120
+
+# More than this on one call is not a family, it is someone testing the door.
+_MAX_REGISTRATIONS_PER_CALL = 2
+
+
+def _normalise_phone(value: str) -> str | None:
+    """A UK number as eleven digits starting with 0, or None if it is not one."""
+    digits = re.sub(r"\D", "", value or "")
+    if digits.startswith("44") and len(digits) == 12:
+        digits = "0" + digits[2:]
+    return digits if _UK_PHONE.match(digits) else None
+
+
+def _spoken_digits(utterances: list[str]) -> str:
+    """
+    Every digit the caller said, in order, however they said it.
+
+    People read phone numbers as "oh seven seven double oh", so number
+    words, "oh", and "double" or "triple" are all turned into digits.
+    """
+    words = re.findall(r"[a-z]+|\d+", " ".join(utterances).lower())
+    digits: list[str] = []
+    repeat = 1
+    for word in words:
+        if word in ("double", "triple"):
+            repeat = 2 if word == "double" else 3
+            continue
+        if word.isdigit():
+            digits.append(word[0] * repeat + word[1:])
+        elif word in _NUMBER_WORDS:
+            digits.append(_NUMBER_WORDS[word] * repeat)
+        repeat = 1
+    return "".join(digits)
+
+
+def _phone_was_said(phone: str, utterances: list[str]) -> bool:
+    """True if the caller said this number, with or without the +44 or leading 0."""
+    return phone[1:] in _spoken_digits(utterances)
+
+
+def _letters(text: str) -> str:
+    return "".join(ch for ch in (text or "").casefold() if ch.isalpha())
+
+
+def _fuzzy_contains(haystack: str, needle: str, max_errors: int) -> bool:
+    """True if needle appears in haystack with at most max_errors edits."""
+    if needle in haystack:
+        return True
+    if max_errors == 0:
+        return False
+    size = len(needle)
+    for width in (size - 1, size, size + 1):
+        if width <= 0:
+            continue
+        for start in range(0, max(0, len(haystack) - width) + 1):
+            if _edit_distance(needle, haystack[start:start + width]) <= max_errors:
+                return True
+    return False
+
+
+def _name_was_said(full_name: str, utterances: list[str]) -> bool:
+    """
+    True if every part of the name was said, allowing speech to text spellings.
+
+    Checked for the same reason as postcodes: a model with nothing to go on
+    fills the gap with something plausible, and a record created under an
+    invented name is worse than no record.
+
+    Matched against everything the caller said run together as letters, so
+    a name spelled out letter by letter is found, and so is one speech to
+    text split or merged: a real call heard "Eileen Ashworth" as "Isai Lee
+    Nashworth", which contains "ashworth" whole and "aileen", one letter
+    from "eileen". Longer name parts tolerate more errors.
+    """
+    heard = _letters(" ".join(utterances))
+    for part in re.split(r"[\s'-]+", full_name or ""):
+        part = _letters(part)
+        if len(part) < 2:
+            continue
+        allowed = 0 if len(part) < 4 else 1 if len(part) < 8 else 2
+        if not _fuzzy_contains(heard, part, allowed):
+            return False
+    return True
+
+
+# Said before a name, never part of it. Stored with the name they would make
+# a later duplicate check miss "Priya Sharma" against "Mrs Priya Sharma".
+_TITLES = {"mr", "mrs", "ms", "miss", "mx", "dr", "doctor", "sir", "madam"}
+
+
+def _clean_name(value: str) -> str:
+    """
+    "  mrs mary-jane o'neil " becomes "Mary-Jane O'Neil".
+
+    Only a name given all in one case is recapitalised, so "McDonald" as
+    said is left alone.
+    """
+    parts = re.sub(r"\s+", " ", (value or "").strip()).split(" ")
+    while len(parts) > 1 and parts[0].casefold().strip(".") in _TITLES:
+        parts.pop(0)
+
+    def capitalise(word: str) -> str:
+        if word != word.lower() and word != word.upper():
+            return word
+        return re.sub(r"(^|[-'])(\w)", lambda m: m.group(1) + m.group(2).upper(), word.lower())
+
+    return " ".join(capitalise(part) for part in parts if part)
+
+
+def _name_is_plausible(name: str) -> bool:
+    """Letters, spaces, hyphens and apostrophes, and not absurdly long."""
+    return 0 < len(name) <= 60 and all(ch.isalpha() or ch in " '-." for ch in name)
+
+
 class SophiaTools:
     """
     One conversation's worth of tool access.
@@ -284,6 +433,8 @@ class SophiaTools:
         # agent. None means the tools are being used directly, by a test or
         # a script, where there is no caller whose words to check against.
         self.caller_heard: list[str] | None = None
+        # Records created on this call for callers new to the practice.
+        self.registered_patient_ids: list[int] = []
         # Set on an outbound call: the only patient who may be verified, and
         # the queued reminder the call belongs to. See outbound.py.
         self.expected_patient_id: int | None = None
@@ -407,6 +558,23 @@ class SophiaTools:
                 "say": "Could you tell me your postcode, please?",
             }
 
+        # On a call Sophia placed, the model already knows the patient's name,
+        # so it passes the right one whatever the caller said. A voice test
+        # showed it: speech to text heard "Isai Lee Nashworth" and the model
+        # sent "Eileen Ashworth". That leaves the date of birth and postcode
+        # doing all the work. So here the name must be one the caller said.
+        if (
+            self.expected_patient_id is not None
+            and self.caller_heard is not None
+            and not _name_was_said(full_name, self.caller_heard)
+        ):
+            return {
+                "verified": False,
+                "reason": "missing_details",
+                "missing": ["full name"],
+                "say": "Could you tell me your full name, please?",
+            }
+
         spoken_postcode = _normalise_postcode(postcode).upper()
         if not _UK_POSTCODE.match(spoken_postcode):
             return {
@@ -473,14 +641,176 @@ class SophiaTools:
             }
 
         # Deliberately identical response whether the patient does not
-        # exist or the details did not line up.
+        # exist or the details did not line up. It offers the new patient
+        # route to everyone, which says nothing about which case this is.
         self.verified_patient_id = None
         return {
             "verified": False,
             "reason": "no_match",
             "say": (
                 "I am sorry, I cannot find a record matching those details. "
-                "I can take a message for the team, and they will call you back."
+                "Have you been to the practice before? If you are new, I can set "
+                "you up as a new patient. Otherwise I can take a message for the team."
+            ),
+        }
+
+    # -- 1b. callers new to the practice ----------------------------------
+
+    def register_new_patient(self, full_name: str, dob: str, postcode: str, phone: str) -> dict:
+        """
+        Set up a record for a caller who has never been to the practice.
+
+        Until this existed, nobody could book unless they were already on
+        file, so a genuinely new caller, the person a receptionist most
+        needs to win, could only leave a message.
+
+        The record is private: the practice accepts new private patients,
+        while new NHS places are limited and the waiting list is paused.
+        The caller is then treated as verified for their own new record
+        only, which holds nothing but what they have just said.
+
+        Every check here exists because the alternative went wrong somewhere
+        else in this project, or would have:
+
+          - every detail must be something the caller actually said, the
+            same grounding used for postcodes after a model invented one
+          - no new record for someone who already matches a patient, which
+            would create a duplicate and let a caller who got their
+            postcode wrong start a second history
+          - refused on an outbound call, where Sophia rang a known patient
+          - refused once a caller is verified as an existing patient
+          - children go to the team, who need a parent or guardian
+          - a limit per call, and the same details twice return the same record
+        """
+        for label, value in (("full name", full_name), ("date of birth", dob),
+                             ("postcode", postcode), ("phone number", phone)):
+            if (value or "").strip().casefold() in _PLACEHOLDERS:
+                return {"registered": False, "reason": "missing_details", "missing": [label],
+                        "say": f"Could you tell me your {label}, please?"}
+
+        if self.expected_patient_id is not None:
+            raise ToolError("New patients cannot be registered on an outbound call.")
+
+        if self.verified_patient_id is not None and self.verified_patient_id not in self.registered_patient_ids:
+            return {"registered": False, "reason": "already_a_patient",
+                    "say": "You are already registered with us, so there is no need to set up a new record."}
+
+        full_name = _clean_name(full_name)
+        if not _name_is_plausible(full_name) or len(full_name.split()) < 2:
+            return {"registered": False, "reason": "missing_details", "missing": ["full name"],
+                    "say": "Could I take your first name and surname, please?"}
+
+        normalised_dob = _normalise_dob(dob)
+        born = datetime.strptime(normalised_dob, clock.DB_DATE_FORMAT).date() if normalised_dob else None
+        today = self.now.date()
+        if born is None or born > today or (today.year - born.year) > _MAXIMUM_PLAUSIBLE_AGE:
+            return {"registered": False, "reason": "date_not_understood",
+                    "say": "Sorry, I did not catch that date of birth. Could you give it to me again, starting with the day?"}
+
+        spoken_postcode = _normalise_postcode(postcode).upper()
+        if not _UK_POSTCODE.match(spoken_postcode):
+            return {"registered": False, "reason": "postcode_not_understood",
+                    "say": "Sorry, I did not catch that as a UK postcode. Could you say it again, letter by letter?"}
+
+        normalised_phone = _normalise_phone(phone)
+        if normalised_phone is None:
+            return {"registered": False, "reason": "phone_not_understood",
+                    "say": "Sorry, I did not catch that as a UK phone number. Could you say it again, digit by digit?"}
+
+        if self.caller_heard is not None:
+            unsaid = [
+                label for label, said in (
+                    ("full name", _name_was_said(full_name, self.caller_heard)),
+                    ("postcode", _postcode_was_said(postcode, self.caller_heard)),
+                    ("phone number", _phone_was_said(normalised_phone, self.caller_heard)),
+                )
+                if not said
+            ]
+            if unsaid:
+                return {"registered": False, "reason": "missing_details", "missing": unsaid,
+                        "say": f"Could you tell me your {unsaid[0]}, please?"}
+
+            # Verification can try both readings of "05/04/1990", but a new
+            # record stores one, and a wrong one would fail this patient on
+            # every call from now on. Speech to text has written a UK date
+            # month first before. So an ambiguous number is confirmed by
+            # asking, unless the caller has already said the month by name.
+            readings = _dob_readings(dob, normalised_dob, self.caller_heard)
+            month_name = clock._MONTHS[born.month - 1]
+            names = month_name if month_name == "May" else f"{month_name}|{month_name[:3]}"
+            # Next to a day or a year, because "May I book a check up?" is not a date.
+            said_month = re.search(
+                rf"(?:\bof|\d|\b\w+(?:st|nd|rd|th))\s+(?:{names})\b"
+                rf"|\b(?:{names})\s+(?:\d|nineteen|twenty|two thousand|the\b)",
+                " ".join(self.caller_heard),
+                re.IGNORECASE,
+            )
+            if len(readings) > 1 and not said_month:
+                spoken = sorted(
+                    f"the {clock._ordinal(day.day)} of {clock._MONTHS[day.month - 1]} {day.year}"
+                    for day in (datetime.strptime(r, clock.DB_DATE_FORMAT).date() for r in readings)
+                )
+                return {"registered": False, "reason": "date_ambiguous",
+                        "say": f"Just to be sure I have it right, is that {spoken[0]}, or {spoken[1]}?"}
+
+        age = today.year - born.year - ((today.month, today.day) < (born.month, born.day))
+        if age < _MINIMUM_AGE_TO_REGISTER:
+            return {"registered": False, "reason": "child",
+                    "say": ("A child needs a parent or guardian registered alongside them, which the "
+                            "team will arrange. Let me take a message and they will call you back.")}
+
+        # The same details again on this call: the record already exists.
+        for patient_id in self.registered_patient_ids:
+            row = self._patient_row(patient_id)
+            if (_normalise_name(row["full_name"]) == _normalise_name(full_name)
+                    and row["dob"] == normalised_dob):
+                self.verified_patient_id = patient_id
+                self.verified_name = row["full_name"]
+                return {"registered": True, "patient_id": patient_id, "already_done": True,
+                        "say": "You are already set up from a moment ago."}
+
+        # Already a patient under these details. The wording does not say
+        # so, because that would confirm to a stranger that a named person
+        # with that birthday is on the practice list.
+        readings = sorted(_dob_readings(dob, normalised_dob, self.caller_heard))
+        same_birthday = self.conn.execute(
+            f"SELECT * FROM patients WHERE dob IN ({', '.join('?' for _ in readings)})", readings
+        ).fetchall()
+        if any(_name_similarity(full_name, row["full_name"]) >= _NAME_SIMILARITY for row in same_birthday):
+            return {"registered": False, "reason": "cannot_register",
+                    "say": ("I am not able to set up a new record with those details over the phone. "
+                            "Let me take a message, and the team will call you back to sort it out.")}
+
+        if len(self.registered_patient_ids) >= _MAX_REGISTRATIONS_PER_CALL:
+            return {"registered": False, "reason": "limit",
+                    "say": "I can only set up a couple of new patients on one call. Let me take a message for the rest."}
+
+        name = full_name
+        cursor = self.conn.execute(
+            "INSERT INTO patients (code, full_name, dob, postcode, phone, patient_type, notes) "
+            "VALUES (?, ?, ?, ?, ?, 'private', ?)",
+            (
+                f"new-{uuid.uuid4().hex[:10]}",
+                name,
+                normalised_dob,
+                _format_postcode(spoken_postcode),
+                normalised_phone,
+                f"Registered by phone with Sophia on {today.isoformat()}. Not yet seen.",
+            ),
+        )
+        self.conn.commit()
+
+        self.registered_patient_ids.append(cursor.lastrowid)
+        self.verified_patient_id = cursor.lastrowid
+        self.verified_name = name
+        return {
+            "registered": True,
+            "patient_id": cursor.lastrowid,
+            "first_name": name.split()[0],
+            "funding": "private",
+            "say": (
+                f"Thank you, {name.split()[0]}, you are set up as a new private patient. "
+                "Your first appointment would be a new patient examination."
             ),
         }
 
@@ -819,6 +1149,14 @@ class SophiaTools:
         self.conn.commit()
 
         fee = policies.format_fee(type_row["fee_gbp"], bool(type_row["fee_is_from"]))
+        # The practice takes a new patient's first examination fee when it is
+        # booked. Sophia cannot take payment, so she says who will, rather
+        # than leave the caller to find out on the day.
+        payment = (
+            " The first examination is paid when it is booked, so the team will "
+            "call you to take payment."
+            if appointment_type == "PRIV_NEW_EXAM" else ""
+        )
         self.bookings_made.append(
             {
                 "appointment_id": cursor.lastrowid,
@@ -837,7 +1175,7 @@ class SophiaTools:
             "fee": fee,
             "say": (
                 f"That is booked. {clock.spoken_datetime(start)} with {clinician['name']}, "
-                f"for a {type_row['name'].lower()}, and the charge is {fee}. "
+                f"for a {type_row['name'].lower()}, and the charge is {fee}.{payment} "
                 "If you need to change it, please give us at least 24 hours notice."
             ),
         }
@@ -867,9 +1205,12 @@ class SophiaTools:
 
         patient = self._patient_row(patient_id)
         facts = PatientFacts.from_row(patient)
-        type_code = policies.emergency_type_code(
-            patient["patient_type"], facts, self.now.date()
-        )
+        # The record says how a patient is usually seen, but urgent care is
+        # open to NHS and private alike. Every new patient's record is
+        # private, so without this a new caller who asked for NHS urgent care
+        # was charged £85 instead of £27.90.
+        funding = _latest_funding_request(self.caller_heard) or patient["patient_type"]
+        type_code = policies.emergency_type_code(funding, facts, self.now.date())
         type_row = self._type_row(type_code)
 
         start = clock.combine(self.now.date(), clock.parse_time(row["slot_time"]))
@@ -1177,6 +1518,22 @@ class SophiaTools:
         today = self.now.date()
 
         if purpose == "check_up":
+            # Someone new, or away more than three years, is a new patient,
+            # and new NHS places are limited with the waiting list paused.
+            # Booking them an NHS check up anyway would promise a place the
+            # practice does not have. Urgent NHS care is different: it is
+            # open to people with no regular dentist, so it is not stopped.
+            if funding == "nhs" and not policies.is_registered(facts, today):
+                return {
+                    "appointment_type": None,
+                    "reason": "new_nhs_places_paused",
+                    "say": (
+                        "New NHS places are very limited at the moment and the waiting list "
+                        "is paused, so I cannot book an NHS check up. I can book a private new "
+                        "patient examination, or take your details for the team to call you "
+                        "back if NHS places open up."
+                    ),
+                }
             code = policies.exam_type_code(funding, facts, today)
         elif purpose == "urgent":
             code = policies.emergency_type_code(funding, facts, today)
