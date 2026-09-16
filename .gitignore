@@ -24,3 +24,8 @@ Thumbs.db
 .vscode/
 .idea/
 .venv/
+
+# Private project context. Holds personal and interview detail and must
+# never be committed. The working copy lives outside this repository.
+SOPHIA_PROJECT_CONTEXT.md
+*.private.md
