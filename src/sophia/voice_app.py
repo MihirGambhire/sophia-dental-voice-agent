@@ -648,8 +648,8 @@ def create_app() -> FastAPI:
         app.state.sessions.clear_leftovers()
         # Build the shared model client now, so the first caller after a
         # restart is not the one kept waiting while it loads certificates.
-        if config.LLM.gemini_api_key:
-            await asyncio.to_thread(providers._shared_genai_client, config.LLM.gemini_api_key)
+        for key in config.LLM.gemini_keys:
+            await asyncio.to_thread(providers._shared_genai_client, key)
         yield
 
     app = FastAPI(title="Sophia", lifespan=lifespan)

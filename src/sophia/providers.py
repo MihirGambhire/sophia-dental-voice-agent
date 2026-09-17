@@ -493,7 +493,7 @@ def judge_failure(failure, provider: str) -> Verdict:
 
     if status == 429:
         if is_daily_quota(failure):
-            wait = seconds_until_gemini_reset() if provider == "gemini" else REST_WHEN_UNAVAILABLE_SECS
+            wait = seconds_until_gemini_reset() if _base(provider) == "gemini" else REST_WHEN_UNAVAILABLE_SECS
             return Verdict(True, wait, "429 daily quota used up")
         return Verdict(True, _suggested_wait(failure) or REST_AFTER_RATE_LIMIT_SECS, "429 rate limited")
     if (status is not None and status >= 500) or name in ("ServerError", "InternalServerError"):
@@ -600,7 +600,7 @@ class FallbackClient:
         a live call moving to the next model is quicker than waiting.
         """
         client = build_single_client(provider)
-        if provider == "gemini":
+        if _base(provider) == "gemini":
             client.chat.completions.RETRY_DELAYS_SECS = ()
         elif provider == "groq":
             client = client.with_options(max_retries=0)
@@ -665,6 +665,11 @@ def build_client(provider: str | None = None):
     return build_single_client(provider or config.LLM.provider)
 
 
+def _base(provider: str) -> str:
+    """The provider without its key slot: "gemini#2" is gemini."""
+    return provider.partition("#")[0]
+
+
 def build_single_client(provider: str):
     """
     Build the client for one provider.
@@ -673,13 +678,21 @@ def build_single_client(provider: str):
     is a missing key and the least helpful response is a stack trace.
     """
 
-    if provider == "gemini":
+    if _base(provider) == "gemini":
         if not config.LLM.gemini_api_key:
             raise ProviderError(
                 "LLM_PROVIDER is gemini but GEMINI_API_KEY is empty in .env. "
                 "Get a free key at https://aistudio.google.com/apikey"
             )
-        return GeminiClient(config.LLM.gemini_api_key)
+        slot = provider.partition("#")[2] or "1"
+        keys = config.LLM.gemini_keys
+        if not slot.isdigit() or not 1 <= int(slot) <= len(keys):
+            raise ProviderError(f"No Gemini key number {slot} is set in .env.")
+        # Each key gets its own client and its own record of the call. Tool
+        # calls made under another key are then told to Gemini as text, the
+        # path already proven for Groq, since a thought signature from one
+        # project is not known to be accepted by another.
+        return GeminiClient(keys[int(slot) - 1])
 
     if provider == "groq":
         if not config.LLM.groq_api_key:

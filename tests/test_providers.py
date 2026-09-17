@@ -523,10 +523,58 @@ def test_the_chain_starts_with_the_primary_and_skips_what_it_cannot_use(monkeypa
 
     settings = LLMSettings(
         provider="gemini", gemini_model="a", gemini_api_key="g", groq_api_key="",
-        fallbacks="gemini:a, gemini:b ,groq:c,mystery:d,gemini:",
+        extra_gemini_keys=(), fallbacks="gemini:a, gemini:b ,groq:c,mystery:d,gemini:",
     )
     assert settings.chain() == [("gemini", "a"), ("gemini", "b")]
-    assert LLMSettings(provider="gemini", gemini_model="a", gemini_api_key="g", fallbacks="none").chain() == [("gemini", "a")]
+    assert LLMSettings(provider="gemini", gemini_model="a", gemini_api_key="g", extra_gemini_keys=(),
+                       fallbacks="none").chain() == [("gemini", "a")]
+
+
+def test_every_gemini_key_is_tried_on_a_model_before_the_next_model():
+    """Staying on the fast model is the point of having more keys."""
+    from sophia.config import LLMSettings
+
+    settings = LLMSettings(
+        provider="gemini", gemini_model="a", gemini_api_key="g1", groq_api_key="q",
+        extra_gemini_keys=("", "g2", "g1", "g3"), fallbacks="gemini:b,groq:c",
+    )
+    assert settings.gemini_keys == ["g1", "g2", "g3"]
+    assert settings.chain() == [
+        ("gemini", "a"), ("gemini#2", "a"), ("gemini#3", "a"),
+        ("gemini", "b"), ("gemini#2", "b"), ("gemini#3", "b"),
+        ("groq", "c"),
+    ]
+    assert "g2" not in repr(settings)
+
+
+def test_a_rate_limited_key_hands_the_same_model_to_the_next_key():
+    chain = [("gemini", "primary"), ("gemini#2", "primary"), ("gemini", "backup")]
+    client, fakes, health = chain_client(
+        {"gemini": {"primary": PER_MINUTE, "backup": "slow"}, "gemini#2": {"primary": "fast"}}, chain
+    )
+    assert ask(client).choices[0].message.content == "fast"
+    assert client.served_by == "gemini#2:primary"
+    assert health.why_resting("gemini:primary") and not health.why_resting("gemini#2:primary")
+
+
+def test_a_key_slot_builds_a_client_with_that_key(monkeypatch):
+    from sophia.config import LLMSettings
+
+    monkeypatch.setattr(providers.config, "LLM", LLMSettings(
+        provider="gemini", gemini_api_key="first", extra_gemini_keys=("second",)))
+    used = []
+    monkeypatch.setattr(providers, "GeminiClient", lambda key: used.append(key) or key)
+    providers.build_single_client("gemini#2")
+    providers.build_single_client("gemini")
+    assert used == ["second", "first"]
+    with pytest.raises(providers.ProviderError):
+        providers.build_single_client("gemini#3")
+
+
+def test_a_daily_quota_on_a_second_key_rests_until_the_gemini_reset(monkeypatch):
+    monkeypatch.setattr(providers, "seconds_until_gemini_reset", lambda: 1234.0)
+    verdict = providers.judge_failure(DAILY, "gemini#2")
+    assert verdict.move_on and verdict.rest_seconds == 1234.0
 
 
 def test_the_gemini_adapter_does_not_retry_a_daily_quota(monkeypatch):

@@ -1218,6 +1218,30 @@ it directly rather than trying Cartesia first.
 
 ---
 
+### 39. Several Gemini keys, so the fast model stays in use
+
+**Symptom.** Replies felt slow. When the primary model hit its per minute
+or daily limit, the chain dropped to the next model, and the fallbacks are
+slower: gemini-3-flash-preview at 1.4 to 1.7 seconds a request against
+flash-lite's under one second.
+
+**Decision.** The owner chose to add keys from other Google accounts,
+accepting the risk to those accounts. Each project has its own free tier
+quota, so `GEMINI_API_KEY_2` to `GEMINI_API_KEY_9` each carry another 15
+requests a minute and 500 a day on the same model.
+
+**How it works.** The chain now tries each Gemini model on every key before
+moving to the next model, so a rate limited key hands the fast model to the
+next key instead of to a slower model. Keys appear in logs only by position
+("gemini#2"), never by value. Each key has its own client and its own record
+of the call; tool calls made under another key are told to Gemini as text,
+the path already proven for Groq, because a thought signature issued to one
+project is not known to be accepted by another. With one key set, nothing
+changes. More keys cost nothing on a call that is going well: the second key
+is only asked when the first has just failed.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns

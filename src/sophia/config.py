@@ -162,6 +162,16 @@ class LLMSettings:
     gemini_api_key: str = field(
         default_factory=lambda: _env("GEMINI_API_KEY", ""), repr=False
     )
+    # More Gemini keys, from other Google accounts, as GEMINI_API_KEY_2 up
+    # to GEMINI_API_KEY_9. Each key's project has its own free tier quota,
+    # so when the first key is rate limited or out for the day a call moves
+    # to the next key on the same fast model, rather than dropping to a
+    # slower model. The owner chose this on 17 September 2026, accepting
+    # the risk to those accounts.
+    extra_gemini_keys: tuple[str, ...] = field(
+        default_factory=lambda: tuple(_env(f"GEMINI_API_KEY_{n}", "") for n in range(2, 10)),
+        repr=False,
+    )
     # Probed against the account on 16 September 2026. The larger flash
     # models were returning 503 "high demand" and gemini-3.6-flash took
     # 32 seconds for a single tool call. flash-lite answered in under a
@@ -199,6 +209,15 @@ class LLMSettings:
     def api_key(self) -> str:
         return self.gemini_api_key if self.provider == "gemini" else self.groq_api_key
 
+    @property
+    def gemini_keys(self) -> list[str]:
+        """Every Gemini key that is set, the main one first, no repeats."""
+        keys: list[str] = []
+        for key in (self.gemini_api_key, *self.extra_gemini_keys):
+            if key and key not in keys:
+                keys.append(key)
+        return keys
+
     def chain(self) -> list[tuple[str, str]]:
         """
         Every model Sophia may use, in order, as (provider, model) pairs.
@@ -207,6 +226,10 @@ class LLMSettings:
         an earlier entry, names an unknown provider, or needs a key that is
         not set, so a missing Groq key quietly shortens the chain rather
         than failing a call halfway through it.
+
+        With more than one Gemini key, each Gemini model is tried on every
+        key before the next model: "gemini#2" is the second key. The label
+        names the key by position only, so logs never show the key itself.
         """
         keys = {"gemini": self.gemini_api_key, "groq": self.groq_api_key}
         chain = [(self.provider, self.model)]
@@ -217,7 +240,13 @@ class LLMSettings:
             pair = (provider.strip(), model.strip())
             if pair[1] and keys.get(pair[0]) and pair not in chain:
                 chain.append(pair)
-        return chain
+        extra_slots = range(2, len(self.gemini_keys) + 1)
+        expanded: list[tuple[str, str]] = []
+        for provider, model in chain:
+            expanded.append((provider, model))
+            if provider == "gemini":
+                expanded.extend((f"gemini#{slot}", model) for slot in extra_slots)
+        return expanded
 
 
 @dataclass(frozen=True)
