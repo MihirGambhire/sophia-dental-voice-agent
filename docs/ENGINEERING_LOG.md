@@ -1240,6 +1240,17 @@ project is not known to be accepted by another. With one key set, nothing
 changes. More keys cost nothing on a call that is going well: the second key
 is only asked when the first has just failed.
 
+**The same for Cartesia.** One free Cartesia account's 20,000 credits last
+about a dozen calls, so `CARTESIA_API_KEY_2` to `_9` hold more accounts.
+Each call opens voices for the first two keys not known to be empty, then
+Deepgram, all behind one switch. The voices connect in parallel as the
+call starts, so a second account costs a connection, not a wait added to
+the first. When a voice reports it is out of credit, its key is left out
+of calls for six hours and the call moves to the next voice. An error
+that does not say which voice sent it, arriving within two seconds of a
+switch, is taken as the voice just left repeating itself; without that,
+one empty account could skip a good one on its way to Deepgram.
+
 ---
 
 ## Patterns worth keeping

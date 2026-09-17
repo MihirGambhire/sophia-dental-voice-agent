@@ -120,10 +120,19 @@ INTERRUPT_WORDS = frozenset(
 # The free tier's 20,000 monthly credits went in one morning of samples and
 # testing, and from then every call was silent: Cartesia answered each
 # request with HTTP 402. Now the first out of credit error switches the call
-# to Deepgram's voice and repeats what failed, and later calls start on
-# Deepgram until this long has passed.
+# to the next voice and repeats what failed, and later calls leave that
+# key out until this long has passed. With several Cartesia keys the next
+# voice is the next account; Deepgram comes last.
 VOICE_OUT_OF_CREDIT_REST_SECS = 6 * 3600
-_voice_out_of_credit_until = 0.0
+# Out of credit keys, and when each may be tried again. Held in memory only.
+_cartesia_resting_until: dict[str, float] = {}
+# Cartesia voices opened per call. Each opens a connection as the call
+# starts, in parallel, so two covers a key running out mid call without
+# every call connecting to every account.
+CARTESIA_VOICES_PER_CALL = 2
+# Errors that do not say which voice failed, arriving this soon after a
+# switch, belong to the voice just left.
+SWITCH_SETTLE_SECS = 2.0
 
 
 def _is_out_of_voice_credit(error) -> bool:
@@ -131,13 +140,20 @@ def _is_out_of_voice_credit(error) -> bool:
     return "402" in text or "quota_exceeded" in text or "insufficient credits" in text
 
 
+def usable_cartesia_keys() -> list[str]:
+    """The Cartesia keys not known to be out of credit, in order."""
+    if not config.SPEECH.uses_cartesia:
+        return []
+    now = time.monotonic()
+    return [key for key in config.SPEECH.cartesia_keys if _cartesia_resting_until.get(key, 0.0) <= now]
+
+
 def cartesia_available() -> bool:
-    return config.SPEECH.uses_cartesia and time.monotonic() >= _voice_out_of_credit_until
+    return bool(usable_cartesia_keys())
 
 
-def _mark_cartesia_out_of_credit() -> None:
-    global _voice_out_of_credit_until
-    _voice_out_of_credit_until = time.monotonic() + VOICE_OUT_OF_CREDIT_REST_SECS
+def _mark_cartesia_out_of_credit(key: str) -> None:
+    _cartesia_resting_until[key] = time.monotonic() + VOICE_OUT_OF_CREDIT_REST_SECS
 
 
 def _words(text: str) -> list[str]:
@@ -159,15 +175,19 @@ class SophiaVoiceProcessor(FrameProcessor):
         agent: SophiaAgent,
         on_event: Callable[[dict], None] | None = None,
         turn_end_silence: float = TURN_END_SILENCE_SECS,
-        backup_voice: FrameProcessor | None = None,
+        voices: list[FrameProcessor] | None = None,
+        voice_keys: dict[FrameProcessor, str] | None = None,
     ):
         super().__init__()
         self.agent = agent
         self.on_event = on_event or (lambda event: None)
         self.turn_end_silence = turn_end_silence
-        # The voice to switch to if the main one runs out of credit.
-        self.backup_voice = backup_voice
-        self._on_backup_voice = False
+        # The voices behind the switch, in the order to use them, and the
+        # Cartesia key each one speaks with. Deepgram, last, has no key.
+        self.voices = list(voices or [])
+        self.voice_keys = dict(voice_keys or {})
+        self._active_voice = 0
+        self._switched_at = float("-inf")
 
         self._pending: list[str] = []
         self._caller_speaking = False
@@ -208,7 +228,7 @@ class SophiaVoiceProcessor(FrameProcessor):
             # went unheard. A connection refused at the start of the call
             # comes before anything was said, and repeating then made the
             # greeting play twice.
-            await self._switch_to_backup_voice(repeat="context_id" in str(frame.error))
+            await self._voice_out_of_credit(frame, repeat="context_id" in str(frame.error))
             await self.push_frame(frame, direction)
             return
 
@@ -255,14 +275,27 @@ class SophiaVoiceProcessor(FrameProcessor):
 
         await self.push_frame(frame, direction)
 
-    async def _switch_to_backup_voice(self, repeat: bool = True) -> None:
-        """The main voice is out of credit: carry on in the backup voice, once."""
-        _mark_cartesia_out_of_credit()
-        if self.backup_voice is None or self._on_backup_voice:
+    async def _voice_out_of_credit(self, frame: ErrorFrame, repeat: bool = True) -> None:
+        """The voice speaking is out of credit: carry on in the next one."""
+        if not self.voices:
             return
-        self._on_backup_voice = True
-        logger.warning("Main voice is out of credit; switching this call to the backup voice")
-        await self.push_frame(ManuallySwitchServiceFrame(service=self.backup_voice))
+        if frame.processor in self.voices:
+            failed = self.voices.index(frame.processor)
+        elif self._now() - self._switched_at < SWITCH_SETTLE_SECS:
+            # Unattributed, and a switch has only just happened: this is the
+            # voice already left saying so again, not the new one failing.
+            return
+        else:
+            failed = self._active_voice
+        key = self.voice_keys.get(self.voices[failed])
+        if key:
+            _mark_cartesia_out_of_credit(key)
+        if failed != self._active_voice or failed == len(self.voices) - 1:
+            return
+        self._active_voice = failed + 1
+        self._switched_at = self._now()
+        logger.warning(f"Voice {failed + 1} is out of credit; switching this call to voice {failed + 2}")
+        await self.push_frame(ManuallySwitchServiceFrame(service=self.voices[self._active_voice]))
         # A sentence that failed was never heard, so it is said again.
         if repeat and self._bot_text:
             await self.push_frame(TTSSpeakFrame(self._bot_text))
@@ -420,29 +453,34 @@ def build_tts():
     Falling back rather than failing, so a missing Cartesia key or voice id
     leaves the demo working on the old voice instead of silent.
     """
-    if cartesia_available():
-        from pipecat.services.cartesia.tts import CartesiaTTSService, GenerationConfig
-
-        speech = config.SPEECH
-        try:
-            speed = min(1.5, max(0.6, float(speech.cartesia_speed))) if speech.cartesia_speed else None
-        except ValueError:
-            logger.warning(f"CARTESIA_SPEED {speech.cartesia_speed!r} is not a number; using the default")
-            speed = None
-        style = GenerationConfig(speed=speed, emotion=speech.cartesia_emotion or None)
-        return CartesiaTTSService(
-            api_key=speech.cartesia_api_key,
-            settings=CartesiaTTSService.Settings(
-                voice=speech.cartesia_voice_id,
-                model=speech.cartesia_model,
-                generation_config=style if (style.speed or style.emotion) else None,
-            ),
-        )
+    keys = usable_cartesia_keys()
+    if keys:
+        return _cartesia_tts(keys[0])
     if config.SPEECH.uses_cartesia:
         logger.warning("Cartesia ran out of credit recently; using Deepgram's voice")
     elif config.SPEECH.tts_provider == "cartesia":
         logger.warning("TTS_PROVIDER is cartesia but the key or voice id is missing; using Deepgram")
     return _deepgram_tts()
+
+
+def _cartesia_tts(api_key: str):
+    from pipecat.services.cartesia.tts import CartesiaTTSService, GenerationConfig
+
+    speech = config.SPEECH
+    try:
+        speed = min(1.5, max(0.6, float(speech.cartesia_speed))) if speech.cartesia_speed else None
+    except ValueError:
+        logger.warning(f"CARTESIA_SPEED {speech.cartesia_speed!r} is not a number; using the default")
+        speed = None
+    style = GenerationConfig(speed=speed, emotion=speech.cartesia_emotion or None)
+    return CartesiaTTSService(
+        api_key=api_key,
+        settings=CartesiaTTSService.Settings(
+            voice=speech.cartesia_voice_id,
+            model=speech.cartesia_model,
+            generation_config=style if (style.speed or style.emotion) else None,
+        ),
+    )
 
 
 def _deepgram_tts():
@@ -503,15 +541,23 @@ def build_pipeline(
         ),
     )
 
-    tts = build_tts()
-    backup_voice = None
-    if cartesia_available():
-        # Both voices sit behind a switch, so a call whose main voice runs
-        # out of credit can carry on in the other one.
-        backup_voice = _deepgram_tts()
-        tts = ServiceSwitcher(services=[tts, backup_voice], strategy_type=ServiceSwitcherStrategyManual)
+    voices: list = []
+    voice_keys: dict = {}
+    keys = usable_cartesia_keys()[:CARTESIA_VOICES_PER_CALL]
+    if keys:
+        # Every voice sits behind a switch, so a call whose voice runs out
+        # of credit carries on in the next: another Cartesia account, then
+        # Deepgram.
+        for key in keys:
+            voice = _cartesia_tts(key)
+            voices.append(voice)
+            voice_keys[voice] = key
+        voices.append(_deepgram_tts())
+        tts = ServiceSwitcher(services=voices, strategy_type=ServiceSwitcherStrategyManual)
+    else:
+        tts = build_tts()
 
-    sophia = SophiaVoiceProcessor(agent, on_event=on_event, backup_voice=backup_voice)
+    sophia = SophiaVoiceProcessor(agent, on_event=on_event, voices=voices, voice_keys=voice_keys)
 
     pipeline = Pipeline(
         [

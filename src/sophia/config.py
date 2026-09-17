@@ -291,6 +291,14 @@ class SpeechSettings:
     cartesia_api_key: str = field(
         default_factory=lambda: _env("CARTESIA_API_KEY", ""), repr=False
     )
+    # More Cartesia keys, from other Cartesia accounts, as CARTESIA_API_KEY_2
+    # up to CARTESIA_API_KEY_9. One free account's credits last about a
+    # dozen calls, so when one runs out the call moves to the next account,
+    # and Deepgram speaks only once every account is empty.
+    extra_cartesia_keys: tuple[str, ...] = field(
+        default_factory=lambda: tuple(_env(f"CARTESIA_API_KEY_{n}", "") for n in range(2, 10)),
+        repr=False,
+    )
     # Chosen by listening, with scripts/voice_samples.py.
     cartesia_voice_id: str = field(default_factory=lambda: _env("CARTESIA_VOICE_ID", ""))
     # Pipecat 1.10's default Cartesia model.
@@ -309,9 +317,18 @@ class SpeechSettings:
         return self.tts_voice
 
     @property
+    def cartesia_keys(self) -> list[str]:
+        """Every Cartesia key that is set, the main one first, no repeats."""
+        keys: list[str] = []
+        for key in (self.cartesia_api_key, *self.extra_cartesia_keys):
+            if key and key not in keys:
+                keys.append(key)
+        return keys
+
+    @property
     def uses_cartesia(self) -> bool:
         """Cartesia only when it is chosen and fully configured, otherwise Deepgram speaks."""
-        return self.tts_provider == "cartesia" and bool(self.cartesia_api_key and self.cartesia_voice_id)
+        return self.tts_provider == "cartesia" and bool(self.cartesia_keys and self.cartesia_voice_id)
 
 
 LLM = LLMSettings()

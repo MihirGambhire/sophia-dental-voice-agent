@@ -623,7 +623,7 @@ def _speech(**overrides):
     from sophia.config import SpeechSettings
 
     return SpeechSettings(**{"deepgram_api_key": "dg", "tts_provider": "deepgram", "cartesia_api_key": "",
-                             "cartesia_voice_id": "", **overrides})
+                             "extra_cartesia_keys": (), "cartesia_voice_id": "", **overrides})
 
 
 def test_cartesia_speaks_when_it_is_chosen_and_configured(monkeypatch):
@@ -717,15 +717,24 @@ def test_words_just_spoken_are_answered_with_the_typed_message():
 # ---------------------------------------------------------------------------
 
 
+def _with_voices(processor, monkeypatch, keys=("k1",)):
+    """Cartesia voices for the given keys, then a Deepgram voice."""
+    from sophia import voice_app
+
+    monkeypatch.setattr(voice_app, "_cartesia_resting_until", {})
+    voices = [object() for _ in keys] + [object()]
+    processor.voices = voices
+    processor.voice_keys = dict(zip(voices, keys))
+    return voices
+
+
 def test_running_out_of_voice_credit_switches_to_the_backup_and_repeats_the_line(monkeypatch):
     """Cartesia's free credits ran out in a morning, and every call went silent."""
     from pipecat.frames.frames import ErrorFrame, ManuallySwitchServiceFrame
     from sophia import voice_app
 
-    monkeypatch.setattr(voice_app, "_voice_out_of_credit_until", 0.0)
-    backup = object()
     processor, pushed, _ = make_processor(FakeAgent())
-    processor.backup_voice = backup
+    voices = _with_voices(processor, monkeypatch)
     processor.set_spoken_text("Hello, you're through to the practice.")
 
     error = ErrorFrame(error="{'context_id': 'abc', 'error_code': 'quota_exceeded', 'status_code': 402}")
@@ -734,18 +743,44 @@ def test_running_out_of_voice_credit_switches_to_the_backup_and_repeats_the_line
 
     switches = [f for f, _ in pushed if isinstance(f, ManuallySwitchServiceFrame)]
     repeats = [f.text for f, _ in pushed if isinstance(f, TTSSpeakFrame)]
-    assert len(switches) == 1 and switches[0].service is backup
+    assert len(switches) == 1 and switches[0].service is voices[1]
     assert repeats == ["Hello, you're through to the practice."]
-    assert not voice_app.cartesia_available()
+    assert "k1" in voice_app._cartesia_resting_until
+
+
+def test_an_empty_account_hands_the_call_to_the_next_account_before_deepgram(monkeypatch):
+    from pipecat.frames.frames import ErrorFrame, ManuallySwitchServiceFrame
+    from sophia import voice_app
+
+    processor, pushed, _ = make_processor(FakeAgent())
+    voices = _with_voices(processor, monkeypatch, keys=("k1", "k2"))
+    first = ErrorFrame(error="{'context_id': 'a', 'status_code': 402}")
+    first.processor = voices[0]
+    asyncio.run(feed(processor, first, FrameDirection.UPSTREAM))
+    # The account just left says so again: no second switch.
+    again = ErrorFrame(error="{'context_id': 'a', 'status_code': 402}")
+    again.processor = voices[0]
+    asyncio.run(feed(processor, again, FrameDirection.UPSTREAM))
+
+    switches = [f.service for f, _ in pushed if isinstance(f, ManuallySwitchServiceFrame)]
+    assert switches == [voices[1]]
+    assert set(voice_app._cartesia_resting_until) == {"k1"}
+
+    # Later the second account runs out too, and Deepgram takes over.
+    processor._switched_at = float("-inf")
+    later = ErrorFrame(error="{'context_id': 'b', 'status_code': 402}")
+    later.processor = voices[1]
+    asyncio.run(feed(processor, later, FrameDirection.UPSTREAM))
+    switches = [f.service for f, _ in pushed if isinstance(f, ManuallySwitchServiceFrame)]
+    assert switches == [voices[1], voices[2]]
+    assert set(voice_app._cartesia_resting_until) == {"k1", "k2"}
 
 
 def test_other_errors_do_not_switch_voices(monkeypatch):
     from pipecat.frames.frames import ErrorFrame, ManuallySwitchServiceFrame
-    from sophia import voice_app
 
-    monkeypatch.setattr(voice_app, "_voice_out_of_credit_until", 0.0)
     processor, pushed, _ = make_processor(FakeAgent())
-    processor.backup_voice = object()
+    _with_voices(processor, monkeypatch)
     asyncio.run(feed(processor, ErrorFrame(error="Deepgram connection reset"), FrameDirection.UPSTREAM))
     assert not any(isinstance(f, ManuallySwitchServiceFrame) for f, _ in pushed)
 
@@ -754,20 +789,29 @@ def test_later_calls_start_on_the_backup_voice_while_credit_is_out(monkeypatch):
     from pipecat.services.deepgram.tts import DeepgramTTSService
     from sophia import voice_app
 
-    monkeypatch.setattr(voice_app.config, "SPEECH",
-                        _speech(tts_provider="cartesia", cartesia_api_key="ck", cartesia_voice_id="voice-1"))
-    monkeypatch.setattr(voice_app, "_voice_out_of_credit_until", float("inf"))
+    monkeypatch.setattr(voice_app.config, "SPEECH", _speech(
+        tts_provider="cartesia", cartesia_api_key="ck", extra_cartesia_keys=(), cartesia_voice_id="voice-1"))
+    monkeypatch.setattr(voice_app, "_cartesia_resting_until", {"ck": float("inf")})
     assert isinstance(voice_app.build_tts(), DeepgramTTSService)
+
+
+def test_later_calls_skip_an_empty_account_and_use_the_next(monkeypatch):
+    from sophia import voice_app
+
+    monkeypatch.setattr(voice_app.config, "SPEECH", _speech(
+        tts_provider="cartesia", cartesia_api_key="ck1", extra_cartesia_keys=("", "ck2", "ck3"),
+        cartesia_voice_id="voice-1"))
+    monkeypatch.setattr(voice_app, "_cartesia_resting_until", {"ck1": float("inf")})
+    assert voice_app.usable_cartesia_keys() == ["ck2", "ck3"]
+    assert "ck2" not in repr(voice_app.config.SPEECH)
 
 
 def test_a_refused_connection_at_the_start_switches_without_repeating(monkeypatch):
     """Nothing had been said yet, and repeating made the greeting play twice."""
     from pipecat.frames.frames import ErrorFrame, ManuallySwitchServiceFrame
-    from sophia import voice_app
 
-    monkeypatch.setattr(voice_app, "_voice_out_of_credit_until", 0.0)
     processor, pushed, _ = make_processor(FakeAgent())
-    processor.backup_voice = object()
+    _with_voices(processor, monkeypatch)
     processor.set_spoken_text("Hello, you're through to the practice.")
 
     error = ErrorFrame(error="Unknown error occurred: server rejected WebSocket connection: HTTP 402")
