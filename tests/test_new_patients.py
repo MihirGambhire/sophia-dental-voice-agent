@@ -272,16 +272,16 @@ def test_the_same_details_twice_give_the_same_record(conn):
     assert patients(conn) == before
 
 
-def test_registrations_on_one_call_are_limited(conn):
-    said = [
-        *NEW_CALLER,
-        "Arjun Sharma, first of June nineteen eighty eight",
-        "Maya Sharma, second of July nineteen ninety two",
-    ]
+def test_only_one_person_is_registered_per_call(conn):
+    """One patient per call: anyone else becomes a message for the team."""
+    said = [*NEW_CALLER, "Arjun Sharma, first of June nineteen eighty eight"]
     session = caller(conn, said=said)
     assert register(session)["registered"]
-    assert register(session, name="Arjun Sharma", dob="1988-06-01")["registered"]
-    assert register(session, name="Maya Sharma", dob="1992-07-02")["reason"] == "limit"
+    before = patients(conn)
+
+    result = register(session, name="Arjun Sharma", dob="1988-06-01")
+    assert result["reason"] == "one_patient_per_call"
+    assert patients(conn) == before
 
 
 def test_a_new_record_reaches_no_one_elses_appointments(conn):

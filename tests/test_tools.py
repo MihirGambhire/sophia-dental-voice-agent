@@ -1060,3 +1060,51 @@ def test_a_time_window_still_never_offers_the_lunch_hour(conn):
     session, _ = verified(conn, "hollis")
     result = session.find_available_slots("NHS_EXAM", after_time="12:30", before_time="14:30", limit=20)
     assert all(not ("13:00" <= slot["time"] < "14:00") for slot in result["slots"])
+
+
+def test_offered_times_mix_mornings_and_afternoons(conn):
+    """
+    Taking each day's earliest slot made every offer 8am, and the model
+    told a tester nothing else existed.
+    """
+    session, _ = verified(conn, "hollis")
+    result = session.find_available_slots("NHS_EXAM")
+    hours = [int(slot["time"][:2]) for slot in result["slots"]]
+
+    assert any(hour < 12 for hour in hours) and any(hour >= 12 for hour in hours)
+    assert "after_time" in result["note"]
+
+
+# ---------------------------------------------------------------------------
+# One patient per call
+# ---------------------------------------------------------------------------
+
+
+def test_after_one_patient_is_verified_another_cannot_be(conn):
+    """
+    A tester registered, was then offered a check on "Sarah Smith" for her
+    husband, and Sophia began verifying a third name. With someone else's
+    details, a caller could have heard their appointments.
+    """
+    session, _ = verified(conn, "hollis")
+    okafor = conn.execute("SELECT * FROM patients WHERE code = 'okafor'").fetchone()
+
+    result = session.verify_patient(okafor["full_name"], okafor["dob"], okafor["postcode"])
+
+    assert result["verified"] is False
+    assert result["reason"] == "one_patient_per_call"
+    assert session.verified_name == "Margaret Hollis"
+
+
+def test_the_refusal_is_the_same_whether_or_not_the_other_person_exists(conn):
+    session, _ = verified(conn, "hollis")
+    okafor = conn.execute("SELECT * FROM patients WHERE code = 'okafor'").fetchone()
+    real = session.verify_patient(okafor["full_name"], okafor["dob"], okafor["postcode"])
+    invented = session.verify_patient("Sarah Smith", "1980-02-02", "WA1 1AA")
+    assert real == invented
+
+
+def test_confirming_the_same_patient_again_is_fine(conn):
+    session, row = verified(conn, "hollis")
+    again = session.verify_patient(row["full_name"], row["dob"], row["postcode"])
+    assert again["verified"] is True

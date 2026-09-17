@@ -305,8 +305,14 @@ _UK_PHONE = re.compile(r"^0\d{10}$")
 _MINIMUM_AGE_TO_REGISTER = 16
 _MAXIMUM_PLAUSIBLE_AGE = 120
 
-# More than this on one call is not a family, it is someone testing the door.
-_MAX_REGISTRATIONS_PER_CALL = 2
+# One patient per call. A tester's call registered one person, was offered
+# a check on "Sarah Smith" for her husband, then began verifying "Margaret
+# Wilson". Anyone with someone else's details could have checked their
+# appointments. Anyone else becomes a message for the team.
+ONE_PATIENT_PER_CALL = (
+    "I can only help with one person's records on a call, and that's you on this one. "
+    "If it's about someone else, I can take a message and the team will call them."
+)
 
 
 def _normalise_phone(value: str, relaxed: bool = False) -> str | None:
@@ -563,6 +569,23 @@ class SophiaTools:
                 "say": "Sorry, I did not catch that date of birth. Could you give it to me again, starting with the day?",
             }
 
+        # Someone is already confirmed on this call. The same person again is
+        # fine; anyone else is refused before any lookup, so the refusal says
+        # nothing about whether that other person is a patient.
+        if self.verified_patient_id is not None:
+            current = self._patient_row(self.verified_patient_id)
+            if not (
+                _name_similarity(full_name, current["full_name"]) >= _NAME_SIMILARITY
+                and current["dob"] in _dob_readings(dob, normalised_dob, self.caller_heard)
+            ):
+                return {"verified": False, "reason": "one_patient_per_call", "say": ONE_PATIENT_PER_CALL}
+            return {
+                "verified": True,
+                "patient_id": current["id"],
+                "first_name": current["full_name"].split()[0],
+                "say": "You are already confirmed on this call.",
+            }
+
         if self.caller_heard is not None and not _postcode_was_said(postcode, self.caller_heard):
             return {
                 "verified": False,
@@ -693,7 +716,7 @@ class SophiaTools:
           - refused on an outbound call, where Sophia rang a known patient
           - refused once a caller is verified as an existing patient
           - children go to the team, who need a parent or guardian
-          - a limit per call, and the same details twice return the same record
+          - one patient per call, and the same details twice return the same record
         """
         for label, value in (("full name", full_name), ("date of birth", dob),
                              ("postcode", postcode), ("phone number", phone)):
@@ -795,9 +818,8 @@ class SophiaTools:
                     "say": ("I am not able to set up a new record with those details over the phone. "
                             "Let me take a message, and the team will call you back to sort it out.")}
 
-        if len(self.registered_patient_ids) >= _MAX_REGISTRATIONS_PER_CALL:
-            return {"registered": False, "reason": "limit",
-                    "say": "I can only set up a couple of new patients on one call. Let me take a message for the rest."}
+        if self.registered_patient_ids:
+            return {"registered": False, "reason": "one_patient_per_call", "say": ONE_PATIENT_PER_CALL}
 
         name = full_name
         cursor = self.conn.execute(
@@ -1016,6 +1038,13 @@ class SophiaTools:
             "duration_minutes": duration,
             "fee": policies.format_fee(type_row["fee_gbp"], bool(type_row["fee_is_from"])),
             "slots": [slot.as_dict() for slot in chosen],
+            # For the model, which once read five listed times as the only
+            # times there were.
+            "note": (
+                "A sample only: each day has many more times. For a particular time "
+                "or part of the day, search again with after_time and before_time. "
+                "Never tell the caller a time is unavailable without searching for it."
+            ),
         }
 
     def get_urgent_slots_today(self) -> dict:
@@ -1591,19 +1620,31 @@ def _spread(slots: list[Slot], limit: int) -> list[Slot]:
     Pick a handful of slots that are actually useful to hear read aloud.
 
     Offering the first five consecutive ten minute slots on one morning is
-    useless. This takes the earliest, then spreads the rest across
-    different days so the caller gets a real choice.
+    useless. This spreads them across different days so the caller gets a
+    real choice, and alternates morning and afternoon.
+
+    It used to take the earliest slot on each day. Every result was then
+    8am, and a tester's call went: only 8am slots, no 3pm tomorrow, nothing
+    between 2 and 5, no lunchtime appointments, all false, because the
+    model concluded from five 8am slots that nothing else existed.
     """
     if len(slots) <= limit:
         return slots
 
     chosen: list[Slot] = []
     seen_days: set[date] = set()
-
+    by_day: dict[date, list[Slot]] = {}
     for slot in slots:
-        if slot.start.date() not in seen_days:
-            chosen.append(slot)
-            seen_days.add(slot.start.date())
+        by_day.setdefault(slot.start.date(), []).append(slot)
+
+    for day, day_slots in by_day.items():
+        want_afternoon = len(chosen) % 2 == 1
+        pick = next(
+            (slot for slot in day_slots if (slot.start.hour >= 12) == want_afternoon),
+            day_slots[0],
+        )
+        chosen.append(pick)
+        seen_days.add(day)
         if len(chosen) == limit:
             return chosen
 

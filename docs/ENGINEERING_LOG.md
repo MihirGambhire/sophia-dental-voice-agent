@@ -1112,6 +1112,59 @@ list now shows them beside each name, as a practice's own call sheet would.
 
 ---
 
+### 37. A tester's stress test: five faults, found in one call
+
+A tester ran a long deliberately awkward call: pain, registration,
+changes of mind, a daughter, other patients, a swollen face, a string of
+unrelated questions, complaints. It ran almost entirely on the weakest
+backup model, `gemini-3.1-flash-lite`, because the main model and the first
+backup had both used their daily quota. That explains some of the
+behaviour, but five faults were in the code and would appear on any model.
+
+**1. "No appointments" when the afternoons were empty.** Offered only 8am
+times, then told "no 3pm tomorrow", "nothing between 2 and 5", "no
+lunchtime appointments", the last two without searching at all. The slot
+search spread results by taking each day's earliest slot, so every offer
+was 8am, and the model concluded nothing else existed. The spread now
+alternates mornings and afternoons, the result carries a note that it is
+a sample and how to search for a time, and any reply claiming what is or
+is not available without a search that turn is sent back to the model
+once to look. If it still has not looked, the claim is replaced.
+
+**2. Invented facts about the practice.** "We do offer Invisalign", which
+is in none of the practice information, and "we are a private practice",
+when it is NHS and private, both with no lookup. The same send back guard
+covers replies stating what the practice offers, accepts or is. The lookup
+was also at fault: "Do you accept Bupa?" returned whichever passage shared
+a word with the question. When nothing specific in a question appears in
+the practice information, it now returns not found, and fillings and
+Invisalign reach the charges where they are actually mentioned.
+
+**3. Switching between patients.** After registering one person, Sophia
+offered to check "Sarah Smith" for her husband, then began verifying a
+third name. Anyone with another person's details could have heard their
+appointments. Now one patient per call: once someone is confirmed, any
+other identity is refused before any lookup, so the refusal is identical
+whether or not that person exists. Anyone else becomes a message.
+
+**4. 999 in ten replies running.** "My face is really swollen" was
+correctly screened as same day urgent, since NHS guidance makes swelling a
+999 case only with difficulty breathing or opening an eye. The model then
+repeated "call 999 or go to A and E" in every reply, about parking and
+email included. The call state now notes that 999 has been mentioned and
+not to repeat it without a new red flag; real red flags are still caught
+by the safety screen before the model, every time.
+
+**5. Losing track after registering.** Asked "have you been a patient
+before?" again, and for an appointment date from someone with none. The
+call state now names the patient, says how many upcoming appointments
+they have, and says not to ask for their details again.
+
+**Checked.** 15 new tests, and the two main guards were each switched off
+to confirm their tests fail without them.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns

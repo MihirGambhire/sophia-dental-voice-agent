@@ -161,3 +161,23 @@ def test_results_are_ordered_best_first():
 
 def test_loading_is_cached_so_a_call_does_not_reread_the_disk():
     assert knowledge.load_passages() is knowledge.load_passages()
+
+
+def test_a_question_about_something_the_practice_information_never_mentions_is_not_found():
+    """
+    "Do you accept Bupa?" used to return whichever passage shared a word
+    with the question, which invites a confident wrong answer.
+    """
+    assert knowledge.answer("Do you accept Bupa?")["found"] is False
+    assert knowledge.answer("Can I pay with Apple Pay?")["found"] is False
+
+
+def test_one_unusual_word_among_covered_ones_is_still_answered():
+    assert knowledge.answer("are you taking new nhs patients?")["found"] is True
+
+
+def test_fillings_and_invisalign_reach_the_charges_they_are_mentioned_in():
+    filling = " ".join(e["text"] for e in knowledge.answer("How much is a filling?")["extracts"]).lower()
+    invisalign = " ".join(e["text"] for e in knowledge.answer("Do you offer Invisalign?")["extracts"]).lower()
+    assert "band" in filling
+    assert "orthodontic" in invisalign

@@ -226,7 +226,7 @@ src/sophia/
   web_audio.py  PCM wire format for the WebSocket
 evals/          live scenario suite, framework and scenarios
 scripts/        init_db, chat, check_setup, list_models, run_evals
-tests/          564 tests, no API key needed
+tests/          579 tests, no API key needed
 web/            call page
 ```
 

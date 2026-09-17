@@ -614,3 +614,102 @@ def test_the_call_state_says_when_a_new_patient_was_registered(conn):
     state = agent._state_block()
     assert "New patient registered on this call: Priya Sharma" in state
     assert "Verified caller" not in state
+
+
+# ---------------------------------------------------------------------------
+# Claims checked against what was looked up this turn
+# ---------------------------------------------------------------------------
+#
+# From a tester's call: "nothing between 2 and 5 tomorrow" and "no lunchtime
+# appointments" with no search at all, and "we do offer Invisalign" with no
+# lookup, when it is nowhere in the practice's information.
+
+
+def test_an_availability_claim_without_a_search_is_sent_back_to_check(conn):
+    agent = agent_with(conn, [
+        text_response("I'm afraid we don't have any appointments between two and five tomorrow."),
+        tool_response([("find_available_slots", {"appointment_type": "NHS_EXAM", "after_time": "14:00"})]),
+        text_response("Tomorrow I have 2:30 pm with Dr Helen Whitfield."),
+    ])
+    record = agent.say("Anytime between 2 and 5 tomorrow?")
+
+    assert record.reply == "Tomorrow I have 2:30 pm with Dr Helen Whitfield."
+    assert "find_available_slots" in record.tools_used
+    assert record.unchecked_claim.startswith("I'm afraid we don't have")
+
+
+def test_a_claim_still_unchecked_after_one_reminder_is_not_spoken(conn):
+    agent = agent_with(conn, [
+        text_response("We only have 8 am slots."),
+        text_response("Sorry, we only have 8 am slots."),
+    ])
+    record = agent.say("Can I come at 3pm?")
+
+    assert "8 am" not in record.reply
+    assert record.corrected_claim == "Sorry, we only have 8 am slots."
+
+
+def test_the_reminder_to_check_is_not_left_in_the_conversation(conn):
+    agent = agent_with(conn, [
+        text_response("We don't have any appointments then."),
+        tool_response([("find_available_slots", {"appointment_type": "NHS_EXAM"})]),
+        text_response("I have Monday at 9 am."),
+    ])
+    agent.say("Anything Friday?")
+    assert not any("CHECK FIRST" in str(m.get("content")) for m in agent.messages)
+
+
+def test_an_availability_answer_after_a_search_is_left_alone(conn):
+    agent = agent_with(conn, [
+        tool_response([("find_available_slots", {"appointment_type": "NHS_EXAM"})]),
+        text_response("I'm sorry, there are no appointments before Monday."),
+    ])
+    record = agent.say("Anything this week?")
+    assert record.reply == "I'm sorry, there are no appointments before Monday."
+    assert record.unchecked_claim is None
+
+
+def test_a_practice_fact_without_a_lookup_is_sent_back_to_check(conn):
+    agent = agent_with(conn, [
+        text_response("We do offer Invisalign."),
+        tool_response([("search_practice_info", {"question": "Do you offer Invisalign?"})]),
+        text_response("I don't have information about Invisalign, so let me take a message."),
+    ])
+    record = agent.say("Do you offer Invisalign?")
+
+    assert "search_practice_info" in record.tools_used
+    assert "offer Invisalign" not in record.reply
+
+
+def test_saying_nhs_or_private_needs_a_lookup(conn):
+    agent = agent_with(conn, [
+        text_response("We are a private practice."),
+        tool_response([("search_practice_info", {"question": "NHS or private?"})]),
+        text_response("We see both NHS and private patients."),
+    ])
+    assert agent.say("Are you NHS or private?").reply == "We see both NHS and private patients."
+
+
+# ---------------------------------------------------------------------------
+# What the call state remembers
+# ---------------------------------------------------------------------------
+
+
+def test_999_advice_is_not_repeated_in_every_reply(conn):
+    """A tester heard "call 999" in ten replies in a row, including about parking."""
+    agent = agent_with(conn, [text_response("If you have difficulty breathing, call 999. Have you been here before?")])
+    agent.say("My face is really swollen")
+    assert "already mentioned 999" in agent._state_block()
+
+
+def test_the_call_state_names_the_patient_and_their_bookings(conn):
+    agent = agent_with(conn, [])
+    row = conn.execute("SELECT * FROM patients WHERE code = 'okafor'").fetchone()
+    agent.tools.caller_heard = None
+    agent.tools.verify_patient(row["full_name"], row["dob"], row["postcode"])
+    agent.now = clock.combine(clock.today(), time(0, 1))
+
+    stage = agent._call_stage()
+    assert "Daniel Okafor" in stage
+    assert "upcoming appointment" in stage
+    assert "Do not ask whether they have been here before" in stage

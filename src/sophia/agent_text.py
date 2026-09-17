@@ -76,6 +76,30 @@ _CLAIMS_BOOKED = re.compile(
 )
 
 
+# A reply saying what is or is not available. On a tester's call, Sophia
+# said "nothing between 2 and 5 tomorrow" and "no lunchtime appointments"
+# without searching at all, when the afternoons were almost empty.
+_CLAIMS_AVAILABILITY = re.compile(
+    r"\b(?:no|not any|don't have any|do not have any|haven't got any|nothing|none)\b"
+    r"[^.?!]{0,40}\b(?:appointments?|slots?|availability|times?|openings?)\b"
+    r"|\b(?:only|limited to)\b[^.?!]{0,40}\b\d{1,2}(?::\d\d)?\s?(?:a\.?m\.?|p\.?m\.?)"
+    r"|\bfully booked\b"
+)
+_CHECKS_AVAILABILITY = {"find_available_slots", "get_urgent_slots_today", "get_patient_status", "check_cancellation"}
+
+# A reply stating what the practice offers or is. The same call had "We do
+# offer Invisalign", which is nowhere in the data, and "we are a private
+# practice", when it is NHS and private, both without any lookup.
+_CLAIMS_PRACTICE_FACT = re.compile(
+    r"\bwe (?:do |also |don't |do not |can't |cannot |can )?(?:offer|provide|accept)\b"
+    r"|\bwe(?: are|'re) (?:an? |only )?(?:nhs|private|mixed)\b"
+    r"|\bour (?:address|phone number|email|website) (?:is|are)\b"
+)
+_CHECKS_PRACTICE_FACT = {"search_practice_info", "get_fee", "recommend_appointment_type"}
+
+_CHECK_FIRST = "CHECK FIRST."
+
+
 def plain_text(value: str) -> str:
     """
     Normalise anything Sophia is about to say.
@@ -107,6 +131,9 @@ class TurnRecord:
     corrected_claim: str | None = None
     # True when the medicine rule changed the reply before it was spoken.
     medication_rule_applied: bool = False
+    # A reply that claimed availability or a practice fact without looking
+    # it up, and was sent back to the model to check before being spoken.
+    unchecked_claim: str | None = None
     # Which models answered this turn, as "provider:model", when the client
     # can fall back between several. Empty for a single fixed model.
     models: list[str] = field(default_factory=list)
@@ -220,6 +247,16 @@ class SophiaAgent:
         if stage:
             lines.append(stage)
 
+        # A tester said "my face is really swollen", correctly screened as a
+        # same day problem, and Sophia then repeated "call 999 or go to A and
+        # E" in the next ten replies, including one about parking. Real red
+        # flags are caught by the safety screen before the model every time.
+        if any("999" in turn.reply for turn in self.history if not turn.escalated_without_model):
+            lines.append(
+                "You have already mentioned 999 on this call. Do not repeat it unless the caller "
+                "describes a new red flag. Answer what they ask."
+            )
+
         if self.reminder is not None:
             lines.append(outbound.call_context(self.reminder))
 
@@ -275,10 +312,20 @@ class SophiaAgent:
                 "unless they say it is not an emergency; if asked, repeat the advice."
             )
         tools = self.tools
-        if tools.verified_patient_id in tools.registered_patient_ids:
-            return "STAGE 4: new patient registered. Help with what they called about."
         if tools.verified_patient_id:
-            return "STAGE 4: existing patient verified. Help with what they called about."
+            # A tester was asked "have you been a patient before?" again after
+            # registering, and for an appointment date when they had none.
+            kind = "new patient registered" if tools.verified_patient_id in tools.registered_patient_ids else "existing patient verified"
+            upcoming = tools.conn.execute(
+                "SELECT COUNT(*) FROM appointments WHERE patient_id = ? AND status = 'booked' AND start_time > ?",
+                (tools.verified_patient_id, clock.to_db(self.now)),
+            ).fetchone()[0]
+            booked = f"{upcoming} upcoming appointment{'s' if upcoming != 1 else ''}" if upcoming else "no upcoming appointments"
+            return (
+                f"STAGE 4: {kind}, {tools.verified_name}, with {booked}. Do not ask whether they "
+                "have been here before or for their details again. Only this patient's records "
+                "can be discussed on this call. Help with what they called about."
+            )
         urgency = (
             "They described a same day problem, so offer today's urgent appointments, not a routine check up. "
             if screening is not None and screening.level is safety.Level.URGENT
@@ -368,6 +415,7 @@ class SophiaAgent:
             self._compact_history()
             return record
 
+        rechecked = False
         for _ in range(MAX_TOOL_ROUNDS):
             response = self._complete()
             served_by = getattr(self.client, "served_by", None)
@@ -377,6 +425,13 @@ class SophiaAgent:
 
             if not getattr(message, "tool_calls", None):
                 record.reply = plain_text(message.content or "")
+                unchecked = self._unchecked_claim(record)
+                if unchecked and not rechecked:
+                    # Sent back once, to look it up, rather than spoken.
+                    rechecked = True
+                    record.unchecked_claim = record.reply
+                    self.messages.append({"role": "system", "content": unchecked})
+                    continue
                 self.messages.append({"role": "assistant", "content": record.reply})
                 break
 
@@ -426,6 +481,23 @@ class SophiaAgent:
             )
             self.messages.append({"role": "assistant", "content": record.reply})
 
+        # The one off instruction to look something up is not part of the
+        # conversation and should not be resent on every later turn.
+        self.messages = [
+            m for m in self.messages
+            if not (m.get("role") == "system" and str(m.get("content", "")).startswith(_CHECK_FIRST))
+        ]
+
+        if self._unchecked_claim(record):
+            # Checked once and still not looked up: better silence on the
+            # point than a confident guess.
+            record.corrected_claim = record.reply
+            record.reply = (
+                "I don't want to tell you the wrong thing there, so let me check. "
+                "Could you tell me again exactly what you'd like to know?"
+            )
+            self.messages[-1] = {"role": "assistant", "content": record.reply}
+
         corrected = self._correct_false_claims(record.reply)
         if corrected is not None:
             record.corrected_claim = record.reply
@@ -459,6 +531,30 @@ class SophiaAgent:
             if message.get("role") == "assistant" and message.get("content") == reply:
                 message["content"] = reply + marker
                 return
+
+    def _unchecked_claim(self, record: TurnRecord) -> str | None:
+        """
+        An instruction to look something up, if this reply claims what it has not checked.
+
+        Only lookups made during this turn count. A fact looked up three
+        turns ago may have been about something else, and the model has
+        shown it will stretch an old answer to cover a new question.
+        """
+        text = (record.reply or "").lower()
+        used = set(record.tools_used)
+        if _CLAIMS_AVAILABILITY.search(text) and not used & _CHECKS_AVAILABILITY:
+            return (
+                f"{_CHECK_FIRST} Your reply said what is or is not available without searching. "
+                "Call find_available_slots now, with after_time and before_time for a time of "
+                "day, and answer only from what it returns."
+            )
+        if _CLAIMS_PRACTICE_FACT.search(text) and not used & _CHECKS_PRACTICE_FACT:
+            return (
+                f"{_CHECK_FIRST} Your reply stated a fact about the practice without looking it "
+                "up. Call search_practice_info now and answer only from what it returns. If it "
+                "finds nothing, say you do not have that information and offer a message."
+            )
+        return None
 
     def _correct_false_claims(self, reply: str) -> str | None:
         """

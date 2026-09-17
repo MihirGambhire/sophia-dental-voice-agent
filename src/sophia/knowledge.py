@@ -70,6 +70,8 @@ SYNONYMS = {
     "time": "hours opening time",
     "times": "hours opening",
     "lunch": "lunch closed 1pm 2pm",
+    "morning": "opening hours 8am",
+    "afternoon": "opening hours 6pm lunch 2pm",
     "night": "out hours emergency 111 closed",
     "evening": "out hours closed 111",
     "weekend": "saturday sunday closed",
@@ -109,6 +111,11 @@ SYNONYMS = {
     "parking": "parking car access ramp",
     "phone": "phone telephone 01925 number",
     "number": "phone telephone 01925 number",
+    "filling": "fillings band 2 charge",
+    "fillings": "fillings band 2 charge",
+    "invisalign": "orthodontics orthodontic",
+    "braces": "orthodontics orthodontic",
+    "aligners": "orthodontics orthodontic",
     "implant": "implants",
     "implants": "implants nhs private",
     "nhs": "nhs band charge",
@@ -239,6 +246,57 @@ def search(question: str, limit: int = 3) -> list[Passage]:
     return [passage for _, passage in scored[:limit]]
 
 
+# Words in a question that say nothing about its subject, so their absence
+# from the documents means nothing either.
+_GENERIC = frozenset(
+    """
+    much many offer offers provide provides accept accepts take takes have give get go goes
+    come see book make help find anything something someone practice dentist dentists dental
+    available possible sure still really just also some any other more best good okay hello
+    thanks thank sorry well bring there here today tomorrow week soon long does doing done
+    """.split()
+)
+
+
+def _uncovered_subject(question: str) -> str | None:
+    """
+    A specific word in the question that no document mentions, if any.
+
+    A tester asked "do you offer Invisalign?" and the scorer returned a
+    paragraph about registering, because "offer" matched. Sophia then said
+    the practice offers Invisalign. When the question's subject appears
+    nowhere in the practice information, the honest answer is not found.
+    """
+    vocabulary = _vocabulary()
+    content = [
+        word for word in re.findall(r"[a-z]+", question.lower())
+        if len(word) >= 4 and word not in STOPWORDS and word not in _GENERIC and word not in SYNONYMS
+    ]
+    uncovered = [
+        word for word in content
+        if not {word, word.rstrip("s"), word + "s", word[:-3] + "y" if word.endswith("ies") else word} & vocabulary
+    ]
+    # Only when nothing specific in the question is covered. "Taking new NHS
+    # patients" has one unusual word among covered ones and is answerable;
+    # "accept Bupa" has nothing covered at all.
+    if content and len(uncovered) == len(content):
+        return uncovered[0]
+    return None
+
+
+_VOCABULARY: frozenset[str] | None = None
+
+
+def _vocabulary() -> frozenset[str]:
+    global _VOCABULARY
+    if _VOCABULARY is None:
+        words: set[str] = set()
+        for passage in load_passages():
+            words.update(re.findall(r"[a-z0-9]+", f"{passage.title} {passage.heading} {passage.text}".lower()))
+        _VOCABULARY = frozenset(words)
+    return _VOCABULARY
+
+
 def answer(question: str, limit: int = 3, max_chars: int = 900) -> dict:
     """
     Retrieve, shaped for handing back to the model as a tool result.
@@ -248,7 +306,8 @@ def answer(question: str, limit: int = 3, max_chars: int = 900) -> dict:
     unrelated passage invites exactly the confident wrong answer this
     module exists to stop.
     """
-    passages = search(question, limit=limit)
+    uncovered = _uncovered_subject(question)
+    passages = [] if uncovered else search(question, limit=limit)
 
     if not passages:
         return {
