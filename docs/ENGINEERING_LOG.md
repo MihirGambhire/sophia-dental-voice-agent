@@ -1081,19 +1081,30 @@ was not repeated in the next five, including the first turn of two new
 calls, so it reads as a one off warm up.
 
 **Locked out by being in public.** A tester somewhere they could not speak
-could not try the demo at all. The page now has a Talk or Type switch.
-Typed messages go to the same agent a call uses, with the same safety
-screen, tools, call stages and transcript, and Sophia still answers out
-loud in the same voice; only speech to text is skipped. A test confirms a
-typed "I can't breathe" gets the 999 advice without the model being asked
-anything. The first version answered in text only, which was not what was
-asked for: the tester wanted to type and still hear her.
+could not try the demo at all. It took three attempts to build what was
+actually wanted, which is worth recording. The first was a separate text
+chat, answering in text: not what was asked. The second spoke those
+replies aloud, but still as a separate Type mode beside the call, and it
+shipped a bug: the stylesheet's `display: flex` on the typing box beat the
+`hidden` attribute, so in Talk mode a disabled box sat under the transcript
+and a tester could not type into it. What was wanted was simpler: one call,
+with a box to type in during it.
 
-The spoken reply is fetched from the server, which only ever speaks
-Sophia's own latest reply in that chat. An endpoint that spoke whatever
-text the page sent would let anyone with the link spend the free voice
-credits on anything they liked, and a test checks text in the request is
-ignored.
+So typing now happens inside the voice call. The text goes down the call's
+own WebSocket as `{"type": "text"}`, becomes a complete caller turn at
+once, without waiting for silence, and Sophia answers on the call in her
+voice. Typing while she talks interrupts her as speaking would, and words
+just spoken are answered together with the typed ones rather than as a
+second turn. A Mute mic button sends silence, so background noise in a
+public place is not transcribed and the speech services keep a steady
+stream. With no microphone at all, the call connects anyway for typing.
+The separate chat endpoints, and the voice endpoint that came with them,
+were deleted rather than left unused.
+
+Removing the Type mode deleted the line connecting the Start call button
+to the call, and the page gave no error. It was caught by clicking the
+button in the browser before handing the change over, which the unit tests
+could not have done.
 
 **Locked out of reminder calls.** Sophia rings a patient and asks for their
 date of birth and postcode, which a tester answering did not know. The call

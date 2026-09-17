@@ -223,12 +223,10 @@ src/sophia/
   voice_app.py  Pipecat pipeline, turn taking, web server
   sessions.py   per tester database copy and transcript
   demo.py       the demo patient list shown to testers
-  text_chat.py  typed conversations, same agent as a call
-  speech.py     a typed reply spoken in the call voice
   web_audio.py  PCM wire format for the WebSocket
 evals/          live scenario suite, framework and scenarios
 scripts/        init_db, chat, check_setup, list_models, run_evals
-tests/          570 tests, no API key needed
+tests/          564 tests, no API key needed
 web/            call page
 ```
 

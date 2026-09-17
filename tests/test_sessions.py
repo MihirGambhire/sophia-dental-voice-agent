@@ -165,3 +165,10 @@ def test_the_demo_patient_list_comes_from_the_testers_own_data(tmp_path):
     bob = client.get(f"/api/demo-patients?session={BOB}").json()["patients"]
     assert {p["postcode"] for p in alice} == {"ZZ9 9ZZ"}
     assert "WA1 2NF" in {p["postcode"] for p in bob}
+
+
+def test_the_call_list_shows_what_to_answer_with(tmp_path):
+    """Testers answering a reminder had no way to know the patient's details."""
+    client, _ = client_with_store(tmp_path)
+    call = client.get(f"/api/reminders?session={ALICE}").json()["calls"][0]
+    assert call["born"] and call["postcode"]

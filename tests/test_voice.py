@@ -663,3 +663,50 @@ def test_a_speed_outside_cartesias_range_is_clamped(monkeypatch):
     monkeypatch.setattr(voice_app.config, "SPEECH", _speech(
         tts_provider="cartesia", cartesia_api_key="ck", cartesia_voice_id="voice-1", cartesia_speed="3"))
     assert voice_app.build_tts()._settings.generation_config.speed == 1.5
+
+
+# ---------------------------------------------------------------------------
+# Typing during a call
+# ---------------------------------------------------------------------------
+
+
+def test_a_typed_message_is_answered_out_loud_straight_away():
+    """A tester in public types; Sophia still speaks the reply on the call."""
+    from sophia.web_audio import TypedTextFrame
+
+    agent = FakeAgent(reply="Have you been a patient here before?")
+    processor, pushed, events = make_processor(agent)
+    processor.turn_end_silence = 60  # a typed message must not wait for silence
+
+    asyncio.run(feed(processor, TypedTextFrame(text="I'd like a check up")))
+
+    assert agent.heard == ["I'd like a check up"]
+    spoken = [frame.text for frame, _ in pushed if isinstance(frame, TTSSpeakFrame)]
+    assert spoken == ["Have you been a patient here before?"]
+    assert events[0] == {"type": "caller", "text": "I'd like a check up"}
+
+
+def test_typing_while_she_talks_interrupts_her():
+    from sophia.web_audio import TypedTextFrame
+
+    agent, processor, _, _, interruptions = speaking_processor()
+    asyncio.run(feed_many(processor, [BotStartedSpeakingFrame(), TypedTextFrame(text="ok")]))
+
+    assert interruptions == [True]
+    assert agent.heard == ["ok"]
+
+
+def test_words_just_spoken_are_answered_with_the_typed_message():
+    """Half said, then typed: one turn, not two answers talking over each other."""
+    from sophia.web_audio import TypedTextFrame
+
+    agent = FakeAgent()
+    processor, _, _ = make_processor(agent)
+    processor.turn_end_silence = 60
+
+    asyncio.run(feed_many(processor, [
+        TranscriptionFrame(text="my name is", user_id="caller", timestamp="now"),
+        TypedTextFrame(text="Margaret Hollis"),
+    ]))
+
+    assert agent.heard == ["my name is Margaret Hollis"]

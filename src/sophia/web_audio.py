@@ -34,13 +34,17 @@ Deliberately trivial, so the browser side needs no library:
   browser -> server   binary message: raw 16 kHz mono signed 16 bit PCM
   server  -> browser  binary message: the same format, Sophia's voice
   server  -> browser  text message:   {"type": "clear"} to stop playback
+  browser -> server   text message:   {"type": "text", "text": "..."}, the caller
+                                      typing instead of speaking
 """
 
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 
 from pipecat.frames.frames import (
+    DataFrame,
     Frame,
     InputAudioRawFrame,
     InterruptionFrame,
@@ -50,6 +54,21 @@ from pipecat.serializers.base_serializer import FrameSerializer
 
 SAMPLE_RATE = 16000
 CHANNELS = 1
+
+# Longer than anyone says in one breath, short enough to stop abuse.
+MAX_TYPED_LENGTH = 500
+
+
+@dataclass
+class TypedTextFrame(DataFrame):
+    """
+    Something the caller typed during a call instead of saying.
+
+    Added for a tester in a public place: they type, and Sophia still
+    answers out loud on the same call.
+    """
+
+    text: str
 
 
 class RawPCMSerializer(FrameSerializer):
@@ -76,4 +95,13 @@ class RawPCMSerializer(FrameSerializer):
                 sample_rate=SAMPLE_RATE,
                 num_channels=CHANNELS,
             )
+        if isinstance(data, str):
+            try:
+                message = json.loads(data)
+            except ValueError:
+                return None
+            if isinstance(message, dict) and message.get("type") == "text":
+                text = " ".join(str(message.get("text") or "").split())[:MAX_TYPED_LENGTH]
+                if text:
+                    return TypedTextFrame(text=text)
         return None

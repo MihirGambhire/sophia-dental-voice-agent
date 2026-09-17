@@ -83,3 +83,40 @@ def test_the_app_exposes_the_websocket_route():
     from sophia.voice_app import app
 
     assert "/ws" in [route.path for route in app.routes]
+
+
+# ---------------------------------------------------------------------------
+# Typing during a call
+# ---------------------------------------------------------------------------
+
+
+def test_a_typed_message_becomes_a_typed_text_frame():
+    import asyncio
+    import json
+
+    from sophia.web_audio import RawPCMSerializer, TypedTextFrame
+
+    frame = asyncio.run(RawPCMSerializer().deserialize(json.dumps({"type": "text", "text": "  I'd  like a check up "})))
+    assert isinstance(frame, TypedTextFrame)
+    assert frame.text == "I'd like a check up"
+
+
+def test_empty_unknown_or_broken_text_messages_are_ignored():
+    import asyncio
+    import json
+
+    from sophia.web_audio import RawPCMSerializer
+
+    serializer = RawPCMSerializer()
+    for message in (json.dumps({"type": "text", "text": "   "}), json.dumps({"type": "other"}), "not json", "[1, 2]"):
+        assert asyncio.run(serializer.deserialize(message)) is None
+
+
+def test_a_very_long_typed_message_is_cut_short():
+    import asyncio
+    import json
+
+    from sophia.web_audio import MAX_TYPED_LENGTH, RawPCMSerializer
+
+    frame = asyncio.run(RawPCMSerializer().deserialize(json.dumps({"type": "text", "text": "a" * 5000})))
+    assert len(frame.text) == MAX_TYPED_LENGTH

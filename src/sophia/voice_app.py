@@ -37,7 +37,7 @@ import time
 from typing import Callable
 
 from fastapi import FastAPI, WebSocket
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -70,7 +70,7 @@ from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketTransport,
 )
 
-from . import config, db, demo, outbound, prompts, providers, sessions, speech, text_chat, web_audio
+from . import config, db, demo, outbound, prompts, providers, sessions, web_audio
 from .agent_text import SophiaAgent
 
 
@@ -199,6 +199,9 @@ class SophiaVoiceProcessor(FrameProcessor):
                 self._cancel_flush()
                 if self._bot_speaking and self._is_barge_in(text):
                     await self._interrupt(text)
+        elif isinstance(frame, web_audio.TypedTextFrame):
+            await self._typed(frame.text)
+            return
         elif isinstance(frame, TranscriptionFrame):
             text = (frame.text or "").strip()
             if text:
@@ -213,6 +216,23 @@ class SophiaVoiceProcessor(FrameProcessor):
                 return
 
         await self.push_frame(frame, direction)
+
+    async def _typed(self, text: str) -> None:
+        """
+        The caller typed instead of speaking.
+
+        A typed message is complete when it arrives, so it does not wait for
+        silence. It stops Sophia if she is talking, as speaking would, and
+        anything the caller had just said aloud is answered together with it.
+        """
+        if self._bot_speaking:
+            await self._interrupt(text)
+        self._cancel_flush()
+        said = " ".join([*self._pending, text]).strip()
+        self._pending.clear()
+        task = asyncio.create_task(self._respond(said))
+        self._turn_tasks.add(task)
+        task.add_done_callback(self._turn_tasks.discard)
 
     # -- telling a real interruption from echo ----------------------------
 
@@ -314,7 +334,15 @@ class SophiaVoiceProcessor(FrameProcessor):
                 await self.push_frame(TTSSpeakFrame(FAILURE_REPLY))
                 return
 
-            self.on_event(text_chat.sophia_event(turn))
+            self.on_event(
+                {
+                    "type": "sophia",
+                    "text": turn.reply,
+                    "tools": turn.tools_used,
+                    "safety": turn.safety_level,
+                    "seconds": round(turn.latency_seconds, 2),
+                }
+            )
             self.set_spoken_text(turn.reply)
             await self.push_frame(TTSSpeakFrame(turn.reply))
 
@@ -454,10 +482,6 @@ def build_pipeline(
 # ---------------------------------------------------------------------------
 
 
-class ChatMessage(BaseModel):
-    text: str
-
-
 class Offer(BaseModel):
     sdp: str
     type: str
@@ -590,56 +614,6 @@ def create_app() -> FastAPI:
         finally:
             conn.close()
 
-    # -- typed chat, for testers who cannot speak aloud --------------------
-
-    @app.post("/api/chat/start")
-    async def chat_start(session: str | None = None, reminder: int | None = None):
-        store = app.state.sessions
-        caller = store.get(session)
-        caller.end_chat()
-        caller.events.clear()
-        caller.chat = text_chat.TextChat(store.database(caller), reminder_id=reminder)
-        store.record(caller, {"type": "sophia", "text": caller.chat.greeting, "tools": []})
-        return {"greeting": caller.chat.greeting}
-
-    @app.post("/api/chat/say")
-    async def chat_say(body: ChatMessage, session: str | None = None):
-        caller = app.state.sessions.find(session)
-        if caller is None or caller.chat is None:
-            return JSONResponse(status_code=409, content={"error": "Start a chat first."})
-        said = " ".join(body.text.split())[: text_chat.MAX_MESSAGE_LENGTH]
-        if not said:
-            return JSONResponse(status_code=400, content={"error": "Type a message first."})
-        store = app.state.sessions
-        store.record(caller, {"type": "caller", "text": said})
-        reply = await caller.chat.say(said)
-        store.record(caller, reply)
-        return reply
-
-    @app.get("/api/chat/voice")
-    async def chat_voice(session: str | None = None):
-        """
-        Sophia's latest typed reply, spoken. The text comes from the chat on
-        the server, never from the request, so the link cannot be used to
-        make the voice say anything else.
-        """
-        caller = app.state.sessions.find(session)
-        if caller is None or caller.chat is None:
-            return JSONResponse(status_code=409, content={"error": "Start a chat first."})
-        try:
-            audio = await asyncio.to_thread(speech.synthesise_wav, caller.chat.last_reply)
-        except speech.SpeechError as failure:
-            logger.warning(f"Could not speak a typed reply: {failure}")
-            return JSONResponse(status_code=502, content={"error": "Sophia's voice is unavailable."})
-        return Response(content=audio, media_type="audio/wav", headers={"Cache-Control": "no-store"})
-
-    @app.post("/api/chat/end")
-    async def chat_end(session: str | None = None):
-        caller = app.state.sessions.find(session)
-        if caller is not None:
-            caller.end_chat()
-        return {"status": "ended"}
-
     @app.post("/api/reset")
     async def reset(session: str | None = None):
         """Put this tester's patients and appointments back as they started."""
@@ -721,7 +695,6 @@ def create_app() -> FastAPI:
 
         store = app.state.sessions
         caller = store.get(session)
-        caller.end_chat()
         caller.events.clear()
 
         def record(event: dict) -> None:

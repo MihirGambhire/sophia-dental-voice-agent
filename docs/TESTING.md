@@ -10,8 +10,9 @@ so her phrasing changes from call to call.
 ## Before you start
 
 - Use Chrome or Edge, press **Start call**, and allow the microphone.
-- Somewhere you cannot talk? Switch to **Type** above the call button and
-  chat instead. It is the same Sophia, with the same checks.
+- Somewhere you cannot talk? Start the call anyway, press **Mute mic**,
+  and type in the box under the transcript. Sophia still answers out loud.
+  With no microphone at all, the call still connects for typing.
 - You can talk over Sophia. She stops when you interrupt her.
 - Say postcodes as letters and numbers, for example "W A 1, 2 N F".
 - Say dates of birth normally, for example "twelfth of March, nineteen
