@@ -16,7 +16,7 @@ so her phrasing changes from call to call.
   fifty eight".
 - Your fake patients are your own copy. Nobody else's call changes them.
   **Reset my demo data** on the page puts them back as they started.
-- The **Demo patients** panel on the page lists every patient below, with
+- The **Demo patients** tab on the page lists every patient below, with
   what to try and their next appointment.
 - Sophia follows a receptionist's order: first whether it is urgent, then
   whether you have been a patient before, then your details. Answering
@@ -149,12 +149,14 @@ question.
 
 ## 10. Sophia rings you
 
-In **Outbound reminder calls** on the page, press **Answer** next to
-**Eileen Ashworth**. Sophia speaks first, as if she has rung you.
+Open the **Sophia calls you** tab and press **Answer** next to anyone on
+the list. Who is there depends on the day, because reminders go to
+patients with an appointment tomorrow. Sophia speaks first, as if she has
+rung you. Their details are in the **Demo patients** tab.
 
-- Say you are Eileen, give her full name and details (Eileen Ashworth,
-  6 December 1949, WA1 1QN), and confirm the appointment. **Correct:** she only mentions the appointment
-  after you have been verified.
+- Say you are that patient, give their full name, date of birth and
+  postcode, and confirm the appointment. **Correct:** she only mentions the
+  appointment after you have been verified.
 - Press Answer again and say "she's not in, I'm her husband."
   **Correct:** she reveals **nothing** about the appointment or why she
   called.

@@ -31,8 +31,8 @@ TRY: dict[str, str] = {
     "brennan": "NHS patient with two late cancellations already. Cancelling brings a warning.",
     "reyes": "NHS patient not seen for three years. An NHS check up is not available, private is.",
     "bannerman": "Give her name and postcode with a wrong date of birth. Sophia should reveal nothing.",
-    "ashworth": "Has an appointment coming up. Answer her reminder call below.",
-    "fairbanks": "Due a check up. Answer her recall call below.",
+    "ashworth": "NHS patient with an appointment coming up.",
+    "fairbanks": "Due a check up. Sophia may ring her: see Sophia calls you.",
 }
 
 REGISTERED = "Registered by you as a new patient on this demo."

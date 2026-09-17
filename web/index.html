@@ -3,142 +3,315 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>Sophia, Museum Street Dental Practice</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.2/src/regular/style.css">
 <style>
+  /*
+    One dark theme, one accent, one radius scale:
+    panels 14px, buttons and inputs 10px, small chips 8px.
+    Red and amber are used only for their meaning: emergency and urgent.
+  */
   :root {
-    --ink: #17212b;
-    --muted: #5d6b7a;
-    --line: #dde3ea;
-    --bg: #f5f7f9;
-    --card: #ffffff;
-    --accent: #1f6feb;
-    --danger: #b3261e;
-    --danger-bg: #fdeceb;
-    --urgent: #8a5a00;
-    --urgent-bg: #fff6e3;
+    --bg: #0c0f13;
+    --surface: #13171d;
+    --raised: #1a1f27;
+    --line: #252c36;
+    --line-soft: #1e242d;
+    --text: #e7eaef;
+    --muted: #9aa3af;
+    --faint: #6f7884;
+    --accent: #3cc79a;
+    --accent-ink: #04150f;
+    --accent-soft: rgba(60, 199, 154, 0.12);
+    --danger: #f07167;
+    --danger-soft: rgba(240, 113, 103, 0.12);
+    --urgent: #e9b44c;
+    --urgent-soft: rgba(233, 180, 76, 0.12);
+    --radius-panel: 14px;
+    --radius-control: 10px;
+    --radius-chip: 8px;
+    --sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "Geist Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
   }
+
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
     margin: 0;
-    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    color: var(--ink);
     background: var(--bg);
+    color: var(--text);
+    font: 15px/1.55 var(--sans);
+    -webkit-font-smoothing: antialiased;
   }
-  .wrap { max-width: 760px; margin: 0 auto; padding: 24px 16px 60px; }
+  button { font: inherit; }
+  code, .mono { font-family: var(--mono); font-size: 0.86em; }
 
-  header { margin-bottom: 20px; }
-  h1 { font-size: 21px; margin: 0 0 4px; letter-spacing: -0.01em; }
-  .sub { color: var(--muted); font-size: 14px; }
-  .disclaimer {
-    margin-top: 12px; padding: 9px 12px; border-radius: 7px;
-    background: #fff8e1; border: 1px solid #f2e2b0;
-    font-size: 13px; color: #6b5619;
+  .page { max-width: 1240px; margin: 0 auto; padding: 0 20px 40px; }
+
+  /* Top bar */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    height: 68px; border-bottom: 1px solid var(--line-soft); margin-bottom: 24px;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .brand-mark {
+    width: 34px; height: 34px; border-radius: var(--radius-chip); flex: none;
+    display: grid; place-items: center;
+    background: var(--accent-soft); color: var(--accent); font-size: 19px;
+  }
+  .brand-name { font-weight: 600; font-size: 16px; letter-spacing: -0.01em; }
+  .brand-sub { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .badge {
+    flex: none; font-size: 12.5px; color: var(--urgent);
+    border: 1px solid rgba(233, 180, 76, 0.35); background: var(--urgent-soft);
+    padding: 4px 10px; border-radius: var(--radius-chip); white-space: nowrap;
   }
 
-  .card {
-    background: var(--card); border: 1px solid var(--line);
-    border-radius: 11px; padding: 18px; margin-bottom: 16px;
+  /* Layout */
+  .layout { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 980px) {
+    .layout { grid-template-columns: minmax(0, 1fr) 390px; align-items: start; }
+    .side { position: sticky; top: 20px; }
   }
 
-  .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-  button {
-    font: inherit; font-weight: 600; border-radius: 8px; padding: 11px 20px;
-    border: 1px solid transparent; cursor: pointer;
+  .panel {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius-panel);
   }
-  #call { background: var(--accent); color: #fff; }
-  #call:hover:not(:disabled) { background: #1a5fd0; }
-  #hangup { background: #fff; color: var(--danger); border-color: #e7c3c0; }
-  button:disabled { opacity: .45; cursor: not-allowed; }
 
-  .status { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
-  .dot { width: 9px; height: 9px; border-radius: 50%; background: #c2cad3; flex: none; }
-  .dot.live { background: #1a9c4a; animation: pulse 1.6s infinite; }
-  .dot.connecting { background: #d99a00; animation: pulse 1s infinite; }
-  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+  /* Call panel */
+  .call { padding: 22px 22px 18px; }
+  .call-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+  .call-title { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+  .call-lede { margin: 4px 0 0; color: var(--muted); max-width: 52ch; }
 
-  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em;
-       color: var(--muted); margin: 0 0 12px; font-weight: 600; }
+  .status {
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 7px 12px; border-radius: var(--radius-control);
+    background: var(--raised); border: 1px solid var(--line);
+    color: var(--muted); font-size: 13.5px;
+  }
+  .indicator { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
+  .indicator.live { background: var(--accent); }
+  .indicator.connecting { background: var(--urgent); }
+  #timer { font-family: var(--mono); color: var(--text); font-size: 13px; }
+  #timer:empty { display: none; }
+  @media (prefers-reduced-motion: no-preference) {
+    .indicator.live, .indicator.connecting { animation: breathe 1.6s ease-in-out infinite; }
+    @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  }
 
-  .turn { margin-bottom: 14px; }
-  .who { font-size: 12px; font-weight: 700; letter-spacing: .04em;
-         text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
+  .controls { display: flex; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+    height: 44px; padding: 0 18px; border-radius: var(--radius-control);
+    border: 1px solid var(--line); background: var(--raised); color: var(--text);
+    font-weight: 500; cursor: pointer; white-space: nowrap;
+    transition: background-color .15s ease, border-color .15s ease, transform .1s ease;
+  }
+  .btn i { font-size: 18px; }
+  .btn:hover:not(:disabled) { border-color: #36404d; background: #202631; }
+  .btn:active:not(:disabled) { transform: translateY(1px); }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .btn-primary:hover:not(:disabled) { background: #52d6aa; border-color: #52d6aa; }
+  .btn-danger { color: var(--danger); border-color: rgba(240, 113, 103, 0.4); background: transparent; }
+  .btn-danger:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger); }
+  .btn-small { height: 34px; padding: 0 12px; font-size: 13.5px; }
+  .btn-ghost { margin-left: auto; background: transparent; border-color: transparent; color: var(--muted); }
+  .btn-ghost:hover:not(:disabled) { color: var(--text); background: var(--raised); border-color: var(--line); }
+
+  .err {
+    margin-top: 14px; padding: 10px 12px; border-radius: var(--radius-control);
+    background: var(--danger-soft); border: 1px solid rgba(240, 113, 103, 0.35);
+    color: #ffb4ad; font-size: 14px;
+  }
+
+  /* Transcript */
+  .transcript-wrap { margin-top: 20px; border-top: 1px solid var(--line-soft); padding-top: 16px; }
+  .section-title { margin: 0 0 12px; font-size: 14px; font-weight: 600; color: var(--muted); }
+  #transcript {
+    display: flex; flex-direction: column; gap: 12px;
+    min-height: 360px; max-height: calc(100dvh - 330px); overflow-y: auto;
+    padding-right: 4px; scroll-behavior: smooth;
+  }
+  @media (max-width: 979px) { #transcript { max-height: 60dvh; min-height: 200px; } }
+  @media (prefers-reduced-motion: reduce) { #transcript { scroll-behavior: auto; } }
+
+  .empty-state {
+    margin: auto; text-align: center; color: var(--muted); max-width: 40ch; padding: 40px 0;
+  }
+  .empty-state i { font-size: 30px; color: var(--faint); display: block; margin-bottom: 10px; }
+
+  .turn { display: flex; flex-direction: column; max-width: 82%; }
+  .turn.caller { align-self: flex-end; align-items: flex-end; }
+  .who { font-size: 12.5px; color: var(--faint); margin: 0 4px 4px; }
   .turn.sophia .who { color: var(--accent); }
-  .text { white-space: pre-wrap; }
-  .meta { margin-top: 5px; font-size: 12px; color: var(--muted); }
-  code { background: #eef1f5; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
-
-  .turn.emergency {
-    background: var(--danger-bg); border-left: 3px solid var(--danger);
-    padding: 10px 12px; border-radius: 0 7px 7px 0;
+  .bubble {
+    padding: 11px 14px; border-radius: var(--radius-panel);
+    background: var(--raised); border: 1px solid var(--line);
+    white-space: pre-wrap; word-wrap: break-word;
   }
+  .turn.caller .bubble { background: #1d2530; border-color: #2a3442; }
+  .turn.emergency .bubble { background: var(--danger-soft); border-color: rgba(240, 113, 103, 0.5); }
   .turn.emergency .who { color: var(--danger); }
-  .turn.urgent {
-    background: var(--urgent-bg); border-left: 3px solid var(--urgent);
-    padding: 10px 12px; border-radius: 0 7px 7px 0;
+  .turn.urgent .bubble { background: var(--urgent-soft); border-color: rgba(233, 180, 76, 0.45); }
+  .turn.urgent .who { color: var(--urgent); }
+  .turn-meta { margin: 5px 4px 0; font-size: 12px; color: var(--faint); font-family: var(--mono); }
+  .note { align-self: center; font-size: 12.5px; color: var(--faint); }
+
+  .call-foot { margin-top: 16px; font-size: 12.5px; color: var(--faint); display: flex; gap: 16px; flex-wrap: wrap; }
+
+  /* Side panel */
+  .side { display: flex; flex-direction: column; gap: 20px; }
+  .guide { padding: 20px 20px 18px; }
+  .guide h2, .tabs-panel h2 { margin: 0 0 12px; font-size: 15px; font-weight: 600; }
+  .steps { margin: 0; padding: 0; list-style: none; counter-reset: step; display: grid; gap: 12px; }
+  .steps li { position: relative; padding-left: 36px; color: var(--muted); font-size: 14px; }
+  .steps li::before {
+    counter-increment: step; content: counter(step);
+    position: absolute; left: 0; top: 0;
+    width: 24px; height: 24px; border-radius: var(--radius-chip);
+    display: grid; place-items: center;
+    background: var(--raised); border: 1px solid var(--line);
+    font: 500 12.5px/1 var(--mono); color: var(--text);
   }
-  .empty { color: var(--muted); font-size: 14px; }
-  .err { color: var(--danger); font-size: 14px; margin-top: 10px; }
-  footer { margin-top: 26px; font-size: 12.5px; color: var(--muted); }
-  .call-row { display: flex; gap: 12px; align-items: center; justify-content: space-between;
-              padding: 10px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
-  .call-row:first-child { border-top: 0; }
-  .call-row .who-call { font-weight: 600; }
-  .call-row button { padding: 7px 14px; font-size: 14px; background: #fff;
-                     color: var(--accent); border-color: #c9dafc; }
+  .steps strong { color: var(--text); font-weight: 500; }
+
+  .tabs-panel { padding: 8px 8px 12px; }
+  .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: var(--bg); border-radius: var(--radius-control); }
+  .tab {
+    height: 36px; border: 0; border-radius: var(--radius-chip); cursor: pointer;
+    background: transparent; color: var(--muted); font-weight: 500; font-size: 14px;
+  }
+  .tab[aria-selected="true"] { background: var(--raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--line); }
+  .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .tab-body { padding: 14px 12px 0; }
+  .tab-lede { margin: 0 0 12px; color: var(--muted); font-size: 13.5px; }
+  .list { display: grid; gap: 8px; max-height: calc(100dvh - 400px); min-height: 160px; overflow-y: auto; padding-right: 2px; }
+  @media (max-width: 979px) { .list { max-height: none; } }
+
+  .record {
+    padding: 12px 13px; border-radius: var(--radius-control);
+    background: var(--raised); border: 1px solid var(--line-soft);
+  }
+  .record-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .record-name { font-weight: 500; }
+  .record-details { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; }
+  .record-details span { color: var(--faint); }
+  .record-details b { font-family: var(--mono); font-weight: 400; color: var(--text); margin-left: 5px; }
+  .record-hint { margin-top: 6px; font-size: 13px; color: var(--muted); }
+  .record-next { margin-top: 6px; font-size: 12.5px; color: var(--faint); }
+  .chip {
+    font-size: 11.5px; padding: 2px 8px; border-radius: var(--radius-chip);
+    background: var(--accent-soft); color: var(--accent); white-space: nowrap;
+  }
+  .loading { color: var(--faint); font-size: 13.5px; padding: 8px 2px; }
+
+
+  footer {
+    margin-top: 28px; padding-top: 18px; border-top: 1px solid var(--line-soft);
+    font-size: 12.5px; color: var(--faint); display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  }
+
+  @media (max-width: 640px) {
+    .page { padding: 0 14px 32px; }
+    .brand-sub { display: none; }
+    .call { padding: 18px 16px 14px; }
+    .turn { max-width: 92%; }
+    .btn { flex: 1; }
+    .btn-ghost { margin-left: 0; flex-basis: 100%; }
+  }
 </style>
 </head>
 <body>
-<div class="wrap">
+<div class="page">
 
-  <header>
-    <h1>Museum Street Dental Practice</h1>
-    <div class="sub">Speak to Sophia, the practice's AI assistant</div>
-    <div class="disclaimer">
-      Unofficial concept demo. Not affiliated with, endorsed by, or connected to
-      Museum Street Dental Practice. All patient records are invented.
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"><i class="ph ph-tooth"></i></div>
+      <div style="min-width:0">
+        <div class="brand-name">Sophia</div>
+        <div class="brand-sub">AI receptionist for Museum Street Dental Practice, Warrington</div>
+      </div>
     </div>
+    <span class="badge" title="Not affiliated with, endorsed by, or connected to Museum Street Dental Practice. All patient records are invented.">Unofficial demo</span>
   </header>
 
-  <div class="card">
-    <div class="controls">
-      <button id="call">Start call</button>
-      <button id="hangup" disabled>Hang up</button>
-      <button id="reset" title="Put your fake patients and appointments back as they started">Reset my demo data</button>
-      <div class="status"><span class="dot" id="dot"></span><span id="state">Not connected</span></div>
-    </div>
-    <div class="err" id="error" hidden></div>
-    <div class="meta" id="setup" style="margin-top:12px"></div>
-  </div>
+  <main class="layout">
 
-  <div class="card">
-    <h2>Demo patients</h2>
-    <div class="meta" style="margin:-4px 0 12px">
-      Made up records to test with. A real practice system would never show these. When
-      Sophia asks whether you have been before, say yes and give one of these, or say no
-      and make up your own details as a new patient. Anyone you register appears here, so
-      you can call back as them.
-    </div>
-    <div id="demo-patients"><div class="empty">Loading...</div></div>
-  </div>
+    <section class="panel call" aria-labelledby="call-title">
+      <div class="call-head">
+        <div>
+          <h1 class="call-title" id="call-title">Call the practice</h1>
+          <p class="call-lede">Sophia answers like a receptionist: urgent or routine first, then whether you have been a patient before, then your details.</p>
+        </div>
+        <div class="status" role="status" aria-live="polite">
+          <span class="indicator" id="dot"></span>
+          <span id="state">Not connected</span>
+          <span id="timer"></span>
+        </div>
+      </div>
 
-  <div class="card">
-    <h2>Outbound reminder calls</h2>
-    <div class="meta" style="margin:-4px 0 12px">
-      The practice's call list. Press <b>Answer</b> to play the person picking up the phone.
-      Sophia speaks first, as if she has rung them. Try answering as the patient, then again
-      as somebody else in the house.
-    </div>
-    <div id="reminders"><div class="empty">Loading the call list...</div></div>
-  </div>
+      <div class="controls">
+        <button class="btn btn-primary" id="call"><i class="ph ph-phone" aria-hidden="true"></i>Start call</button>
+        <button class="btn btn-danger" id="hangup" disabled><i class="ph ph-phone-disconnect" aria-hidden="true"></i>Hang up</button>
+        <button class="btn btn-ghost" id="reset" title="Puts your patients and appointments back as they started"><i class="ph ph-arrow-counter-clockwise" aria-hidden="true"></i>Reset demo data</button>
+      </div>
+      <div class="err" id="error" hidden></div>
 
-  <div class="card">
-    <h2>Transcript</h2>
-    <div id="transcript"><div class="empty">Start the call and say hello.</div></div>
-  </div>
+      <div class="transcript-wrap">
+        <h2 class="section-title">Transcript</h2>
+        <div id="transcript">
+          <div class="empty-state">
+            <i class="ph ph-microphone" aria-hidden="true"></i>
+            Start a call and say hello. Your conversation appears here as you speak, with the checks Sophia ran on each reply.
+          </div>
+        </div>
+      </div>
+
+      <div class="call-foot" id="setup"></div>
+    </section>
+
+    <aside class="side">
+
+      <section class="panel guide" aria-labelledby="guide-title">
+        <h2 id="guide-title">How to test</h2>
+        <ol class="steps">
+          <li><strong>Start a call</strong> and say what you need, for example a check up or toothache.</li>
+          <li><strong>Say whether it is urgent</strong>, and whether you have been a patient here before.</li>
+          <li><strong>Give your details.</strong> Use a demo patient below, or make up your own as a new patient. Made up postcodes and phone numbers are fine.</li>
+        </ol>
+      </section>
+
+      <section class="panel tabs-panel">
+        <div class="tabs" role="tablist" aria-label="Test data">
+          <button class="tab" role="tab" id="tab-patients" aria-controls="pane-patients" aria-selected="true">Demo patients</button>
+          <button class="tab" role="tab" id="tab-outbound" aria-controls="pane-outbound" aria-selected="false">Sophia calls you</button>
+        </div>
+
+        <div class="tab-body" role="tabpanel" id="pane-patients" aria-labelledby="tab-patients">
+          <p class="tab-lede">Invented records to call as. Anyone you register appears here too, so you can call back as them.</p>
+          <div class="list" id="demo-patients"><div class="loading">Loading patients...</div></div>
+        </div>
+
+        <div class="tab-body" role="tabpanel" id="pane-outbound" aria-labelledby="tab-outbound" hidden>
+          <p class="tab-lede">The practice's call list. Press Answer to pick up as the patient, or as someone else in the house.</p>
+          <div class="list" id="reminders"><div class="loading">Loading the call list...</div></div>
+        </div>
+      </section>
+
+    </aside>
+  </main>
 
   <footer>
-    Calls may be recorded. Sophia is an AI assistant, not a clinician, and cannot
-    give clinical or medication advice. In an emergency call 999.
+    <span>Unofficial concept demo. Not affiliated with Museum Street Dental Practice. All patient records are invented.</span>
+    <span>Sophia is an AI assistant, not a clinician. In an emergency, call 999.</span>
   </footer>
 </div>
 
@@ -148,6 +321,7 @@ const callBtn = document.getElementById('call');
 const hangBtn = document.getElementById('hangup');
 const stateEl = document.getElementById('state');
 const dotEl = document.getElementById('dot');
+const timerEl = document.getElementById('timer');
 const errEl = document.getElementById('error');
 const setupEl = document.getElementById('setup');
 const transcriptEl = document.getElementById('transcript');
@@ -160,6 +334,7 @@ const RATE = 16000;
 let ws = null, ctx = null, micStream = null, micNode = null, poller = null, seen = 0;
 let playHead = 0;              // when the next chunk of Sophia's voice starts
 let playing = [];              // queued sources, so a clear can stop them
+let timer = null, callStarted = 0;
 
 // Each tester has their own copy of the demo data and their own transcript,
 // kept by this id. Stored so a booking made on one call is still there to
@@ -177,7 +352,7 @@ const S = encodeURIComponent(SESSION);
 
 function setState(text, cls) {
   stateEl.textContent = text;
-  dotEl.className = 'dot' + (cls ? ' ' + cls : '');
+  dotEl.className = 'indicator' + (cls ? ' ' + cls : '');
 }
 
 function showError(message) {
@@ -185,11 +360,56 @@ function showError(message) {
   errEl.hidden = !message;
 }
 
+function startTimer() {
+  callStarted = Date.now();
+  const tick = () => {
+    const secs = Math.floor((Date.now() - callStarted) / 1000);
+    timerEl.textContent = String(Math.floor(secs / 60)).padStart(2, '0') + ':' + String(secs % 60).padStart(2, '0');
+  };
+  tick();
+  timer = setInterval(tick, 1000);
+}
+
+function stopTimer() {
+  if (timer) { clearInterval(timer); timer = null; }
+  timerEl.textContent = '';
+}
+
+function emptyState(message, icon) {
+  transcriptEl.innerHTML = '';
+  const box = document.createElement('div');
+  box.className = 'empty-state';
+  const glyph = document.createElement('i');
+  glyph.className = 'ph ' + (icon || 'ph-microphone');
+  glyph.setAttribute('aria-hidden', 'true');
+  box.append(glyph, document.createTextNode(message));
+  transcriptEl.appendChild(box);
+}
+
+// Tabs
+const tabs = [
+  [document.getElementById('tab-patients'), document.getElementById('pane-patients')],
+  [document.getElementById('tab-outbound'), document.getElementById('pane-outbound')],
+];
+function selectTab(index) {
+  tabs.forEach(([tab, pane], i) => {
+    tab.setAttribute('aria-selected', String(i === index));
+    pane.hidden = i !== index;
+  });
+  try { localStorage.setItem('sophia-tab', String(index)); } catch (e) {}
+}
+tabs.forEach(([tab], i) => { tab.onclick = () => selectTab(i); });
+try { const saved = Number(localStorage.getItem('sophia-tab')); if (saved === 1) selectTab(1); } catch (e) {}
+
 fetch('/api/health').then(r => r.json()).then(info => {
-  setupEl.innerHTML = 'Model: <code>' + info.model + '</code> via <code>' +
-    info.provider + '</code> &nbsp; Voice: <code>' + info.voice + '</code>';
+  setupEl.innerHTML = '';
+  for (const [label, value] of [['Model', info.model], ['Voice', info.voice]]) {
+    const item = el('span', null, label + ' ');
+    item.appendChild(el('code', null, value));
+    setupEl.appendChild(item);
+  }
   if (!info.speech_configured) {
-    showError('No Deepgram key configured, so the call cannot start.');
+    showError('No Deepgram key is configured, so a call cannot start.');
     callBtn.disabled = true;
   }
 }).catch(() => {});
@@ -205,42 +425,40 @@ function render(events) {
     }
     if (event.type === 'interrupted') {
       const note = document.createElement('div');
-      note.className = 'meta';
-      note.style.margin = '-6px 0 12px';
+      note.className = 'note';
       note.textContent = 'Sophia stopped talking because you interrupted';
       transcriptEl.appendChild(note);
       continue;
     }
-    const div = document.createElement('div');
+    const turn = document.createElement('div');
     let cls = 'turn ' + (event.type === 'caller' ? 'caller' : 'sophia');
     if (event.safety === 'emergency_999') cls += ' emergency';
     else if (event.safety === 'urgent_same_day') cls += ' urgent';
-    div.className = cls;
+    turn.className = cls;
 
     const who = document.createElement('div');
     who.className = 'who';
     who.textContent = event.type === 'caller' ? 'You' : 'Sophia';
-    div.appendChild(who);
 
-    const text = document.createElement('div');
-    text.className = 'text';
-    text.textContent = event.text;
-    div.appendChild(text);
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    bubble.textContent = event.text;
+    turn.append(who, bubble);
 
     const bits = [];
-    if (event.tools && event.tools.length) bits.push('tools: ' + event.tools.join(', '));
-    if (event.seconds !== undefined) bits.push(event.seconds + 's');
     if (event.safety === 'emergency_999') bits.push('999 escalation, booking blocked');
     else if (event.safety === 'urgent_same_day') bits.push('same day urgency');
+    if (event.tools && event.tools.length) bits.push(event.tools.join(', '));
+    if (event.seconds !== undefined) bits.push(event.seconds + 's');
     if (bits.length) {
       const meta = document.createElement('div');
-      meta.className = 'meta';
+      meta.className = 'turn-meta';
       meta.textContent = bits.join('  |  ');
-      div.appendChild(meta);
+      turn.appendChild(meta);
     }
-    transcriptEl.appendChild(div);
+    transcriptEl.appendChild(turn);
   }
-  window.scrollTo(0, document.body.scrollHeight);
+  transcriptEl.scrollTop = transcriptEl.scrollHeight;
 }
 
 // Polls overlap when a request takes longer than the interval, which it
@@ -254,7 +472,7 @@ async function poll() {
   try {
     const data = await (await fetch('/api/events?session=' + S + '&after=' + seen)).json();
     if (data.events.length) { render(data.events); seen = data.total; }
-  } catch (e) { /* the call matters, the panel does not */ }
+  } catch (e) { /* the call matters, the transcript panel does not */ }
   finally { polling = false; }
 }
 
@@ -337,7 +555,7 @@ async function startCall(reminderId) {
   let connected = false;
   try {
     setState('Connecting', 'connecting');
-    transcriptEl.innerHTML = '<div class="empty">Connecting...</div>';
+    emptyState(reminderId ? 'Connecting. Sophia will speak first, as if she has rung you.' : 'Connecting to Sophia...', 'ph-phone-call');
     seen = 0;
 
     // Created inside the click, because browsers only allow audio to
@@ -355,6 +573,7 @@ async function startCall(reminderId) {
     ws.onopen = () => {
       connected = true;
       setState('On the call', 'live');
+      startTimer();
       hangBtn.disabled = false;
       poller = setInterval(poll, 700);
 
@@ -363,10 +582,8 @@ async function startCall(reminderId) {
       micNode.port.onmessage = event => {
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
         // The microphone stays open while Sophia talks, so the caller can
-        // interrupt her. It used to be muted during her speech to stop a
-        // phone speaker feeding her own voice back in. The server now
-        // recognises her echo by comparing what it hears with what she is
-        // saying, so muting is no longer needed.
+        // interrupt her. The server recognises her echo by comparing what
+        // it hears with what she is saying, so muting is not needed.
         ws.send(event.data);
       };
       source.connect(micNode);
@@ -404,6 +621,7 @@ function cleanup(message) {
   if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
   stopPlayback();
   if (ctx) { ctx.close(); ctx = null; }
+  stopTimer();
   setState(message || 'Not connected');
   setTimeout(loadReminders, 800);
   setTimeout(loadDemoPatients, 800);
@@ -414,10 +632,11 @@ function cleanup(message) {
 hangBtn.onclick = () => cleanup('Call ended');
 
 document.getElementById('reset').onclick = async () => {
-  if (ws) return;
+  if (ws) { showError('Hang up before resetting the demo data.'); return; }
   try {
     await fetch('/api/reset?session=' + S, { method: 'POST' });
-    transcriptEl.innerHTML = '<div class="empty">Demo data reset. Start the call and say hello.</div>';
+    showError('');
+    emptyState('Demo data reset. Start a call and say hello.', 'ph-arrow-counter-clockwise');
     seen = 0;
     loadReminders();
     loadDemoPatients();
@@ -431,37 +650,39 @@ const OUTCOME_LABELS = {
   no_outcome_recorded: 'Called, no outcome recorded'
 };
 
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
 async function loadReminders() {
   const list = document.getElementById('reminders');
   try {
     const { calls } = await (await fetch('/api/reminders?session=' + S)).json();
-    if (!calls.length) { list.innerHTML = '<div class="empty">Nothing to call.</div>'; return; }
     list.innerHTML = '';
+    if (!calls.length) { list.appendChild(el('div', 'loading', 'Nobody left to call.')); return; }
     for (const call of calls) {
-      const row = document.createElement('div');
-      row.className = 'call-row';
-      const info = document.createElement('div');
-      const name = document.createElement('div');
-      name.className = 'who-call';
-      name.textContent = call.patient;
-      const detail = document.createElement('div');
-      detail.className = 'meta';
-      detail.style.marginTop = '0';
-      const why = call.reason === 'day_before' ? 'Reminder: ' + call.appointment : 'Due a check up';
-      const state = call.status === 'pending' ? 'Not called yet' : (OUTCOME_LABELS[call.outcome] || call.outcome);
-      detail.textContent = why + '  |  ' + state;
-      info.append(name, detail);
-      const button = document.createElement('button');
-      button.textContent = 'Answer';
+      const row = el('div', 'record');
+      const top = el('div', 'record-top');
+      top.appendChild(el('div', 'record-name', call.patient));
+      const button = el('button', 'btn btn-small');
+      button.innerHTML = '<i class="ph ph-phone-incoming" aria-hidden="true"></i>Answer';
       button.onclick = () => { if (!ws) startCall(call.id); };
-      row.append(info, button);
+      top.appendChild(button);
+      row.appendChild(top);
+      const why = call.reason === 'day_before' ? 'Reminder: ' + call.appointment : 'Due a check up';
+      row.appendChild(el('div', 'record-hint', why));
+      const state = call.status === 'pending' ? 'Not called yet' : (OUTCOME_LABELS[call.outcome] || call.outcome);
+      row.appendChild(el('div', 'record-next', state));
       list.appendChild(row);
     }
   } catch (e) {
-    list.innerHTML = '<div class="empty">Could not load the call list.</div>';
+    list.innerHTML = '';
+    list.appendChild(el('div', 'loading', 'Could not load the call list.'));
   }
 }
-loadReminders();
 
 async function loadDemoPatients() {
   const list = document.getElementById('demo-patients');
@@ -469,29 +690,30 @@ async function loadDemoPatients() {
     const { patients } = await (await fetch('/api/demo-patients?session=' + S)).json();
     list.innerHTML = '';
     for (const patient of patients) {
-      const row = document.createElement('div');
-      row.className = 'call-row';
-      const info = document.createElement('div');
-      const name = document.createElement('div');
-      name.className = 'who-call';
-      name.textContent = patient.name;
-      const details = document.createElement('div');
-      details.className = 'meta';
-      details.style.marginTop = '0';
-      details.textContent = 'Born ' + patient.born + '  |  Postcode ' + patient.postcode +
-        (patient.phone ? '  |  Phone ' + patient.phone : '');
-      const hint = document.createElement('div');
-      hint.className = 'meta';
-      hint.style.marginTop = '2px';
-      hint.textContent = patient.try + (patient.next_appointment ? '  Next appointment: ' + patient.next_appointment + '.' : '');
-      info.append(name, details, hint);
-      row.append(info);
+      const row = el('div', 'record');
+      const top = el('div', 'record-top');
+      top.appendChild(el('div', 'record-name', patient.name));
+      if (patient.registered_by_you) top.appendChild(el('span', 'chip', 'Registered by you'));
+      row.appendChild(top);
+      const details = el('div', 'record-details');
+      for (const [label, value] of [['Born', patient.born], ['Postcode', patient.postcode], ['Phone', patient.phone]]) {
+        if (!value) continue;
+        const pair = el('span', null, label);
+        pair.appendChild(el('b', null, value));
+        details.appendChild(pair);
+      }
+      row.appendChild(details);
+      if (!patient.registered_by_you) row.appendChild(el('div', 'record-hint', patient.try));
+      if (patient.next_appointment) row.appendChild(el('div', 'record-next', 'Next appointment: ' + patient.next_appointment));
       list.appendChild(row);
     }
   } catch (e) {
-    list.innerHTML = '<div class="empty">Could not load the demo patients.</div>';
+    list.innerHTML = '';
+    list.appendChild(el('div', 'loading', 'Could not load the demo patients.'));
   }
 }
+
+loadReminders();
 loadDemoPatients();
 </script>
 </body>
