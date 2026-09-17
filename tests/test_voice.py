@@ -612,3 +612,54 @@ def test_the_page_no_longer_mutes_the_microphone_while_she_speaks():
 
     page = (config.ROOT_DIR / "web" / "index.html").read_text(encoding="utf-8")
     assert "ctx.currentTime < playHead" not in page
+
+
+# ---------------------------------------------------------------------------
+# Choosing the voice
+# ---------------------------------------------------------------------------
+
+
+def _speech(**overrides):
+    from sophia.config import SpeechSettings
+
+    return SpeechSettings(**{"deepgram_api_key": "dg", "tts_provider": "deepgram", "cartesia_api_key": "",
+                             "cartesia_voice_id": "", **overrides})
+
+
+def test_cartesia_speaks_when_it_is_chosen_and_configured(monkeypatch):
+    from pipecat.services.cartesia.tts import CartesiaTTSService
+    from sophia import voice_app
+
+    monkeypatch.setattr(voice_app.config, "SPEECH",
+                        _speech(tts_provider="cartesia", cartesia_api_key="ck", cartesia_voice_id="voice-1"))
+    assert isinstance(voice_app.build_tts(), CartesiaTTSService)
+
+
+def test_a_half_configured_cartesia_falls_back_to_deepgram_rather_than_silence(monkeypatch):
+    from pipecat.services.deepgram.tts import DeepgramTTSService
+    from sophia import voice_app
+
+    monkeypatch.setattr(voice_app.config, "SPEECH", _speech(tts_provider="cartesia", cartesia_api_key="ck"))
+    assert isinstance(voice_app.build_tts(), DeepgramTTSService)
+
+
+def test_the_cartesia_key_never_appears_in_a_repr():
+    assert "secret-cartesia" not in repr(_speech(cartesia_api_key="secret-cartesia"))
+
+
+def test_the_chosen_way_of_speaking_reaches_cartesia(monkeypatch):
+    from sophia import voice_app
+
+    monkeypatch.setattr(voice_app.config, "SPEECH", _speech(
+        tts_provider="cartesia", cartesia_api_key="ck", cartesia_voice_id="voice-1",
+        cartesia_speed="0.9", cartesia_emotion="calm"))
+    style = voice_app.build_tts()._settings.generation_config
+    assert style.speed == 0.9 and style.emotion == "calm"
+
+
+def test_a_speed_outside_cartesias_range_is_clamped(monkeypatch):
+    from sophia import voice_app
+
+    monkeypatch.setattr(voice_app.config, "SPEECH", _speech(
+        tts_provider="cartesia", cartesia_api_key="ck", cartesia_voice_id="voice-1", cartesia_speed="3"))
+    assert voice_app.build_tts()._settings.generation_config.speed == 1.5

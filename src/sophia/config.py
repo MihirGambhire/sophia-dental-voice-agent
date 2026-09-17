@@ -245,6 +245,39 @@ class SpeechSettings:
         default_factory=lambda: _env("DEEPGRAM_TTS_VOICE", "aura-athena-en")
     )
 
+    # Which service speaks for Sophia: deepgram or cartesia. Deepgram's
+    # British voices were judged not good enough once people heard them on
+    # real calls, and Cartesia's free tier (20K credits a month, about 27
+    # minutes of speech, checked 17 September 2026) was chosen over losing
+    # quality to a local model. Speech to text stays on Deepgram either way.
+    tts_provider: str = field(
+        default_factory=lambda: _env("TTS_PROVIDER", "deepgram").strip().lower()
+    )
+    cartesia_api_key: str = field(
+        default_factory=lambda: _env("CARTESIA_API_KEY", ""), repr=False
+    )
+    # Chosen by listening, with scripts/voice_samples.py.
+    cartesia_voice_id: str = field(default_factory=lambda: _env("CARTESIA_VOICE_ID", ""))
+    # Pipecat 1.10's default Cartesia model.
+    cartesia_model: str = field(default_factory=lambda: _env("CARTESIA_MODEL", "sonic-3.6"))
+    # How she speaks, also chosen by listening. Speed runs 0.6 to 1.5, and
+    # emotion is one of Cartesia's named tones, such as calm or content.
+    # Empty means the voice's own default.
+    cartesia_speed: str = field(default_factory=lambda: _env("CARTESIA_SPEED", ""))
+    cartesia_emotion: str = field(default_factory=lambda: _env("CARTESIA_EMOTION", ""))
+
+    @property
+    def voice_label(self) -> str:
+        """What the page shows as the voice in use."""
+        if self.uses_cartesia:
+            return f"cartesia {self.cartesia_model}"
+        return self.tts_voice
+
+    @property
+    def uses_cartesia(self) -> bool:
+        """Cartesia only when it is chosen and fully configured, otherwise Deepgram speaks."""
+        return self.tts_provider == "cartesia" and bool(self.cartesia_api_key and self.cartesia_voice_id)
+
 
 LLM = LLMSettings()
 SPEECH = SpeechSettings()

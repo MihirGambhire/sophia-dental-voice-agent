@@ -343,6 +343,39 @@ class SophiaVoiceProcessor(FrameProcessor):
         await super().cleanup()
 
 
+def build_tts():
+    """
+    The voice Sophia speaks with: Cartesia when configured, otherwise Deepgram.
+
+    Falling back rather than failing, so a missing Cartesia key or voice id
+    leaves the demo working on the old voice instead of silent.
+    """
+    if config.SPEECH.uses_cartesia:
+        from pipecat.services.cartesia.tts import CartesiaTTSService, GenerationConfig
+
+        speech = config.SPEECH
+        try:
+            speed = min(1.5, max(0.6, float(speech.cartesia_speed))) if speech.cartesia_speed else None
+        except ValueError:
+            logger.warning(f"CARTESIA_SPEED {speech.cartesia_speed!r} is not a number; using the default")
+            speed = None
+        style = GenerationConfig(speed=speed, emotion=speech.cartesia_emotion or None)
+        return CartesiaTTSService(
+            api_key=speech.cartesia_api_key,
+            settings=CartesiaTTSService.Settings(
+                voice=speech.cartesia_voice_id,
+                model=speech.cartesia_model,
+                generation_config=style if (style.speed or style.emotion) else None,
+            ),
+        )
+    if config.SPEECH.tts_provider == "cartesia":
+        logger.warning("TTS_PROVIDER is cartesia but the key or voice id is missing; using Deepgram")
+    return DeepgramTTSService(
+        api_key=config.SPEECH.deepgram_api_key,
+        settings=DeepgramTTSSettings(voice=config.SPEECH.tts_voice),
+    )
+
+
 def build_pipeline(
     transport,
     on_event: Callable[[dict], None] | None = None,
@@ -386,10 +419,7 @@ def build_pipeline(
         ),
     )
 
-    tts = DeepgramTTSService(
-        api_key=config.SPEECH.deepgram_api_key,
-        settings=DeepgramTTSSettings(voice=config.SPEECH.tts_voice),
-    )
+    tts = build_tts()
 
     sophia = SophiaVoiceProcessor(agent, on_event=on_event)
 
@@ -529,7 +559,7 @@ def create_app() -> FastAPI:
             "model": config.LLM.model,
             "model_chain": [f"{provider}:{model}" for provider, model in config.LLM.chain()],
             "models_resting": providers.HEALTH.snapshot(),
-            "voice": config.SPEECH.tts_voice,
+            "voice": config.SPEECH.voice_label,
             "speech_configured": bool(config.SPEECH.deepgram_api_key),
             "turn_configured": config.turn_configured(),
         }

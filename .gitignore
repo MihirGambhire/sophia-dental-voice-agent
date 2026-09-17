@@ -15,6 +15,7 @@ htmlcov/
 data/sophia.db
 data/sophia.db-journal
 data/sessions/
+data/voice_samples/
 logs/
 transcripts/
 
