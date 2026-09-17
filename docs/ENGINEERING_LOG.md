@@ -1211,9 +1211,10 @@ ways. The script that measures latency found the real fault by failing.
 versions of the same lines were compared by ear, then Gemini's own speech
 model, and Azure was considered. None matched Cartesia, and Gemini took
 about 20 seconds to generate each reply without streaming. Deepgram's
-`aura-2-pandora-en` at 0.9 speed was chosen: British, from the newer Aura-2
-generation, which is the one that accepts a speed. Calls now start on it
-directly rather than trying Cartesia first.
+`aura-2-pandora-en` was chosen: British, from the newer Aura-2 generation,
+which is the one that accepts a speed. It went live at 0.9 speed, which on
+a real call was too slow, and was set back to normal. Calls now start on
+it directly rather than trying Cartesia first.
 
 ---
 

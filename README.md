@@ -361,7 +361,7 @@ Windows has no system timezone database.
 | Language model | Gemini `gemini-3.5-flash-lite` | Free tier, tool calling intact, under a second per request when measured |
 | Fallback models | `gemini-3-flash-preview`, `gemini-3.1-flash-lite`, then Groq `openai/gpt-oss-120b` | Tried in order when a model is out of quota or overloaded. Each Gemini model has its own daily quota. They keep a call going, but are slower and make more mistakes, so they are a backstop rather than an equal |
 | Speech to text | Deepgram `nova-3`, en-GB | UK English matters for postcodes, surnames and "twenty past nine" |
-| Text to speech | Deepgram `aura-2-pandora-en` at 0.9 speed | British, from the newer Aura-2 generation, chosen by listening. Cartesia sounded better, but its free credits ran out in one morning of testing, so it stays supported as an option (`TTS_PROVIDER=cartesia`) with an automatic switch to Deepgram when credit runs out |
+| Text to speech | Deepgram `aura-2-pandora-en` at normal speed | British, from the newer Aura-2 generation, chosen by listening. Cartesia sounded better, but its free credits ran out in one morning of testing, so it stays supported as an option (`TTS_PROVIDER=cartesia`) with an automatic switch to Deepgram when credit runs out |
 | Voice pipeline | Pipecat, audio over a WebSocket | Open source, and no phone number means no cost |
 | Database | SQLite | Zero setup, and the rules need a real relational model |
 | Practice facts | Keyword retrieval over markdown | Eight short documents with a fixed vocabulary. It passes every retrieval test and returns nothing rather than a weak match. Embeddings would have added a 2.5 GB download for no measured gain |
