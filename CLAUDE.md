@@ -195,7 +195,8 @@ WebSocket (WebRTC failed for remote callers, see the engineering log),
 Gemini `gemini-3.5-flash-lite` by default, falling back in order to
 `gemini-3-flash-preview`, `gemini-3.1-flash-lite` and Groq
 `openai/gpt-oss-120b` when a model is out of quota (`LLM_FALLBACKS`), Deepgram `nova-3` en-GB for speech to text
-and `aura-2-pandora-en` for text to speech, SQLite, keyword retrieval over
+and Cartesia `sonic-3.6` for text to speech across several free accounts,
+with Deepgram `aura-2-pandora-en` as the last resort, SQLite, keyword retrieval over
 markdown (embeddings were dropped, the reason is in `requirements.txt`),
 pytest plus a live scenario suite in `evals/`.
 

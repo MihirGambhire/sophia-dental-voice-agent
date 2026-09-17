@@ -721,6 +721,10 @@ def create_app() -> FastAPI:
             "model_chain": [f"{provider}:{model}" for provider, model in config.LLM.chain()],
             "models_resting": providers.HEALTH.snapshot(),
             "voice": config.SPEECH.voice_label,
+            # Counts only, never the keys: how many voice accounts are set,
+            # and how many still have credit as far as this server knows.
+            "voice_accounts": len(config.SPEECH.cartesia_keys) if config.SPEECH.uses_cartesia else 0,
+            "voice_accounts_usable": len(usable_cartesia_keys()),
             "speech_configured": bool(config.SPEECH.deepgram_api_key),
             "turn_configured": config.turn_configured(),
             # Testers in India called at 12:20, found urgent appointments
