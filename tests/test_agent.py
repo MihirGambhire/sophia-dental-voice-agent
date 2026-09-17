@@ -713,3 +713,11 @@ def test_the_call_state_names_the_patient_and_their_bookings(conn):
     assert "Daniel Okafor" in stage
     assert "upcoming appointment" in stage
     assert "Do not ask whether they have been here before" in stage
+
+
+def test_the_call_state_says_a_new_caller_must_be_registered(conn):
+    agent = agent_with(conn, [text_response("Have you been a patient with us before?"), text_response("Welcome.")])
+    agent.say("I need an appointment")
+    agent.say("nope")
+    stage = agent._call_stage()
+    assert "NEW to the practice" in stage and "Never use verify_patient" in stage

@@ -1253,6 +1253,36 @@ one empty account could skip a good one on its way to Deepgram.
 
 ---
 
+### 40. "Nope", and then five identity checks for a patient who did not exist
+
+**Symptom.** On a live call a tester asked for an urgent appointment, said
+"nope" to "have you been a patient before?", and chose the earliest slot.
+Sophia then ran the existing patient check five times, asked for his postcode
+letter by letter three times because an Indian PIN code is not a UK
+postcode, registered him in the end, and asked "How can I help you today?".
+The urgent appointment he had chosen was forgotten.
+
+**Replayed, with every tool call shown.** The same lines through the text
+agent at the same practice time showed three separate faults: the model
+used `verify_patient` for a caller who had said he was new; the demo's
+relaxed postcode rule applied only to registration, so verification kept
+asking again; and nothing carried the booking across registration. A second
+replay, after the first two fixes, registered him and then booked a routine
+check up, because no booking had been attempted yet, only urgent slots
+looked up.
+
+**Fix, in code.** The agent reads new or existing from the caller's words:
+explicit phrases anywhere ("I've never been"), a short yes or no only right
+after Sophia asked. `verify_patient` refuses a caller who said they are new
+and points to registration, and the call stage says so every turn. In the
+demo a non UK postcode is simply no match, which offers the new patient
+route. A booking tried before identification is remembered and handed back
+in the verification or registration result as the next step, and a caller
+who was shown urgent slots is steered back to them, not to a check up. A
+replay of the call then registered him and booked the urgent appointment.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns

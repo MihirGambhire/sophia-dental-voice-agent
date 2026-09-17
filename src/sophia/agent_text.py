@@ -165,6 +165,42 @@ class TurnRecord:
         return None
 
 
+# Whether the caller is new to the practice, from their own words. A tester
+# answered "nope" to "have you been a patient before?" and the model then
+# tried the existing patient check five times. A short yes or no only counts
+# as an answer when Sophia has just asked that question.
+_ASKED_IF_BEEN_BEFORE = re.compile(
+    r"\b(been|registered|seen)\b[^?]*\b(before|with us|here)\b|\b(new|existing) patient\b[^?]*\?",
+    re.IGNORECASE,
+)
+_SHORT_NO = re.compile(r"^\W*(no|nope|nah|never|not yet|no i haven'?t|i haven'?t)\b", re.IGNORECASE)
+_SHORT_YES = re.compile(r"^\W*(yes|yeah|yep|yup|i have|i am|i'?m registered)\b", re.IGNORECASE)
+_SAYS_NEW = re.compile(
+    r"\b(i'?ve never been|i have never been|never been (to|here|there|a patient)|first time (calling|here|with you)"
+    r"|i'?m (a )?new( patient)?\b|i am (a )?new( patient)?\b|not (yet )?a patient)",
+    re.IGNORECASE,
+)
+_SAYS_EXISTING = re.compile(
+    r"\b(i'?m|i am) (an existing|already a|a registered) patient\b|\bi'?ve been (a patient|coming)\b"
+    r"|\bi have been (a patient|coming)\b",
+    re.IGNORECASE,
+)
+
+
+def said_new_or_existing(said: str, last_reply: str) -> bool | None:
+    """True if the caller says they are new, False if they have been before."""
+    if _SAYS_NEW.search(said):
+        return True
+    if _SAYS_EXISTING.search(said):
+        return False
+    if _ASKED_IF_BEEN_BEFORE.search(last_reply or ""):
+        if _SHORT_NO.search(said):
+            return True
+        if _SHORT_YES.search(said):
+            return False
+    return None
+
+
 class SophiaAgent:
     """One conversation with one caller."""
 
@@ -330,21 +366,41 @@ class SophiaAgent:
                 (tools.verified_patient_id, clock.to_db(self.now)),
             ).fetchone()[0]
             booked = f"{upcoming} upcoming appointment{'s' if upcoming != 1 else ''}" if upcoming else "no upcoming appointments"
+            carry_on = ""
+            if tools.waiting_booking is None and tools.offered_urgent and not tools.bookings_made:
+                carry_on = " They asked for an urgent appointment today: book with book_urgent_slot, not a check up."
+            if tools.waiting_booking is not None:
+                carry_on = (
+                    f" They already asked for a booking: call {tools.waiting_booking['tool']} with "
+                    f"{json.dumps(tools.waiting_booking['arguments'])} now."
+                )
             return (
                 f"STAGE 4: {kind}, {tools.verified_name}, with {booked}. Do not ask whether they "
                 "have been here before or for their details again. Only this patient's records "
-                "can be discussed on this call. Help with what they called about."
+                "can be discussed on this call. Carry on with what they asked for earlier in the "
+                f"call rather than asking how you can help.{carry_on}"
             )
         urgency = (
             "They described a same day problem, so offer today's urgent appointments, not a routine check up. "
             if screening is not None and screening.level is safety.Level.URGENT
             else "If they want an appointment and have not said why, first ask whether it needs seeing today. "
         )
+        if tools.caller_said_new is True:
+            identify = (
+                "The caller has said they are NEW to the practice: take name, date of birth, "
+                "postcode and phone, then register_new_patient. Never use verify_patient for them."
+            )
+        elif tools.caller_said_new is False:
+            identify = "The caller has said they have been here before: name, date of birth, postcode, verify_patient."
+        else:
+            identify = (
+                "Then ask whether they have been a patient here before, unless they said. Existing: "
+                "name, date of birth, postcode, verify_patient. New: name, date of birth, postcode, "
+                "phone, register_new_patient."
+            )
         return (
             "STAGE 1 to 3: caller not identified. General questions need no details. "
-            f"For appointments or records: {urgency}Then ask whether they have been a patient "
-            "here before, unless they said. Existing: name, date of birth, postcode, "
-            "verify_patient. New: name, date of birth, postcode, phone, register_new_patient."
+            f"For appointments or records: {urgency}{identify}"
         )
 
     def _compact_history(self) -> None:
@@ -408,6 +464,10 @@ class SophiaAgent:
         # waiting on a model to decide, and without any chance of it
         # deciding otherwise.
         self.tools.caller_heard.append(text)
+        last_reply = self.history[-1].reply if self.history else self.greeting
+        new_or_existing = said_new_or_existing(text, last_reply)
+        if new_or_existing is not None:
+            self.tools.caller_said_new = new_or_existing
         screening = safety.screen(text)
         if screening.level is not safety.Level.ROUTINE:
             self.last_screening = screening

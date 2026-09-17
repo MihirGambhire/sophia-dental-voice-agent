@@ -956,11 +956,25 @@ def test_a_postcode_said_letter_by_letter_is_understood(conn):
     assert session.verify_patient("Margaret Hollis", "1958-03-12", "W A 1 2 N F")["verified"]
 
 
-def test_a_postcode_that_is_not_a_uk_postcode_is_asked_for_again(conn):
-    """A tester gave an Indian PIN code, which should be re-asked, not searched."""
+def test_a_postcode_that_is_not_a_uk_postcode_is_asked_for_again(conn, monkeypatch):
+    """Outside the demo, an Indian PIN code is re-asked, not searched."""
+    from sophia import config
+
+    monkeypatch.setattr(config, "DEMO_RELAXED_DETAILS", False)
     session = at(conn, a_weekday_at(10))
     result = session.verify_patient("Mihir Gambhire", "2004-04-13", "411027")
     assert result["reason"] == "postcode_not_understood"
+
+
+def test_in_the_demo_a_made_up_postcode_is_no_match_and_offers_registration(conn, monkeypatch):
+    """A tester was asked for his PIN code letter by letter, three times."""
+    from sophia import config
+
+    monkeypatch.setattr(config, "DEMO_RELAXED_DETAILS", True)
+    session = at(conn, a_weekday_at(10))
+    result = session.verify_patient("Mihir Gambhire", "2004-04-13", "411027")
+    assert result["reason"] == "no_match"
+    assert "new patient" in result["say"]
 
 
 # ---------------------------------------------------------------------------

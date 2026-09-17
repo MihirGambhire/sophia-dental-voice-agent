@@ -22,6 +22,8 @@ model as a tool result.
 
 from __future__ import annotations
 
+import json
+
 import re
 import uuid
 from dataclasses import dataclass
@@ -461,6 +463,13 @@ class SophiaTools:
         self.offered_slots: list[dict] = []
         self.offered_urgent: list[dict] = []
         self.bookings_made: list[dict] = []
+        # True once the caller has said they are new to the practice, False
+        # once they have said they have been before, None until either.
+        # Set by the agent from the caller's own words.
+        self.caller_said_new: bool | None = None
+        # A booking the model tried before the caller was identified, so it
+        # can be finished straight after, instead of "how can I help?".
+        self.waiting_booking: dict | None = None
 
     # -- helpers ----------------------------------------------------------
 
@@ -586,12 +595,24 @@ class SophiaTools:
                 "say": "You are already confirmed on this call.",
             }
 
+        # A tester said "nope" to "have you been a patient before?", and the
+        # model still ran the existing patient check five times, asking for
+        # the postcode again and again, before it registered him. A caller
+        # who has said they are new is sent to registration instead.
+        if self.caller_said_new and self.expected_patient_id is None:
+            return {
+                "verified": False,
+                "reason": "caller_is_new",
+                "use_instead": "register_new_patient",
+                "say": "As you are new to us, I will set you up as a new patient.",
+            }
+
         if self.caller_heard is not None and not _postcode_was_said(postcode, self.caller_heard):
             return {
                 "verified": False,
                 "reason": "missing_details",
                 "missing": ["postcode"],
-                "say": "Could you tell me your postcode, please?",
+                "say": "Sorry, I want to be sure I have your postcode exactly right. Could you say it again, letter by letter?",
             }
 
         # On a call Sophia placed, the model already knows the patient's name,
@@ -612,6 +633,11 @@ class SophiaTools:
             }
 
         spoken_postcode = _normalise_postcode(postcode).upper()
+        if not _UK_POSTCODE.match(spoken_postcode) and config.DEMO_RELAXED_DETAILS:
+            # Testers give made up postcodes as new patients. No record on
+            # file has one, so this is simply no match, which offers the new
+            # patient route, rather than asking again letter by letter.
+            return self._no_match()
         if not _UK_POSTCODE.match(spoken_postcode):
             return {
                 "verified": False,
@@ -674,8 +700,12 @@ class SophiaTools:
                 "patient_id": match["id"],
                 "first_name": match["full_name"].split()[0],
                 "say": "Thank you, I have found your record.",
+                **self._carry_on(),
             }
 
+        return self._no_match()
+
+    def _no_match(self) -> dict:
         # Deliberately identical response whether the patient does not
         # exist or the details did not line up. It offers the new patient
         # route to everyone, which says nothing about which case this is.
@@ -688,6 +718,33 @@ class SophiaTools:
                 "Have you been to the practice before? If you are new, I can set "
                 "you up as a new patient. Otherwise I can take a message for the team."
             ),
+        }
+
+    def _carry_on(self) -> dict:
+        """
+        What to do next, once the caller is identified.
+
+        A tester chose the earliest urgent appointment, gave his details,
+        was registered, and then heard "How can I help you today?". The
+        booking he had asked for was forgotten.
+        """
+        if self.waiting_booking is None:
+            # Replayed, the same call registered him and then booked a routine
+            # check up, because nothing had been tried yet: only today's
+            # urgent appointments had been looked up.
+            if self.offered_urgent and not self.bookings_made:
+                return {"next": (
+                    "The caller asked for an urgent appointment today. Offer today's urgent "
+                    "appointments already found and book the one they choose with book_urgent_slot. "
+                    "Not a check up. Do not ask how you can help."
+                )}
+            return {}
+        return {
+            "next": (
+                f"The caller already asked for this booking: call {self.waiting_booking['tool']} with "
+                f"{json.dumps(self.waiting_booking['arguments'])} now, then confirm it. "
+                "Do not ask how you can help."
+            )
         }
 
     # -- 1b. callers new to the practice ----------------------------------
@@ -765,7 +822,7 @@ class SophiaTools:
             ]
             if unsaid:
                 return {"registered": False, "reason": "missing_details", "missing": unsaid,
-                        "say": f"Could you tell me your {unsaid[0]}, please?"}
+                        "say": f"Sorry, I want to be sure I have your {unsaid[0]} exactly right. Could you say it again?"}
 
             # Verification can try both readings of "05/04/1990", but a new
             # record stores one, and a wrong one would fail this patient on
@@ -848,6 +905,7 @@ class SophiaTools:
                 f"Thank you, {name.split()[0]}, you are set up as a new private patient. "
                 "Your first appointment would be a new patient examination."
             ),
+            **self._carry_on(),
         }
 
     # -- 2. patient status ------------------------------------------------
@@ -1122,7 +1180,11 @@ class SophiaTools:
         offered and being accepted it may have been taken, the clinician
         may not work then, or it may have fallen into the past.
         """
+        if self.verified_patient_id is None:
+            self.waiting_booking = {"tool": "book_appointment",
+                                    "arguments": {"slot_ref": slot_ref, "appointment_type": appointment_type}}
         patient_id = self._require_verified()
+        self.waiting_booking = None
         type_row = self._type_row(appointment_type)
 
         if not type_row["is_bookable"]:
@@ -1230,7 +1292,10 @@ class SophiaTools:
         The fee depends on the patient's funding and history, so the type
         is chosen by the policy rules rather than by the model.
         """
+        if self.verified_patient_id is None:
+            self.waiting_booking = {"tool": "book_urgent_slot", "arguments": {"urgent_slot_id": urgent_slot_id}}
         patient_id = self._require_verified()
+        self.waiting_booking = None
         row = self.conn.execute(
             "SELECT * FROM urgent_slots WHERE id = ?", (urgent_slot_id,)
         ).fetchone()

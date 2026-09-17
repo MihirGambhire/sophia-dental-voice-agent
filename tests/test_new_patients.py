@@ -442,3 +442,68 @@ def test_existing_patients_still_need_their_real_postcode_in_the_demo(conn):
     """Relaxing new patients' formats must not relax who counts as an existing patient."""
     session = caller(conn, said=["Margaret Hollis, 12 March 1958, one two three four five"])
     assert session.verify_patient("Margaret Hollis", "1958-03-12", "12345")["verified"] is False
+
+
+# ---------------------------------------------------------------------------
+# A caller who has said they are new
+# ---------------------------------------------------------------------------
+
+
+def test_a_caller_who_said_they_are_new_is_sent_to_registration(conn):
+    """A tester said "nope" and the existing patient check still ran five times."""
+    session = caller(conn)
+    session.caller_said_new = True
+    result = session.verify_patient("Priya Sharma", "1990-05-04", "WA1 3BX")
+    assert result["reason"] == "caller_is_new"
+    assert result["use_instead"] == "register_new_patient"
+    assert session.verified_patient_id is None
+
+
+def test_the_booking_asked_for_before_registering_is_finished_after(conn):
+    """He chose the earliest urgent slot, registered, and heard "How can I help you today?"."""
+    from sophia.tools import ToolError
+
+    session = caller(conn)
+    slot = conn.execute("SELECT id FROM urgent_slots WHERE status = 'available' LIMIT 1").fetchone()[0]
+    with pytest.raises(ToolError):
+        session.book_urgent_slot(slot)
+    assert session.waiting_booking == {"tool": "book_urgent_slot", "arguments": {"urgent_slot_id": slot}}
+
+    result = register(session)
+    assert result["registered"]
+    assert "book_urgent_slot" in result["next"] and str(slot) in result["next"]
+
+    session.book_urgent_slot(slot)
+    assert session.waiting_booking is None
+
+
+def test_nothing_to_carry_on_with_when_no_booking_was_tried(conn):
+    result = register(caller(conn))
+    assert result["registered"] and "next" not in result
+
+
+@pytest.mark.parametrize(
+    "said, last_reply, expected",
+    [
+        ("nope", "Have you been a patient with us before?", True),
+        ("No, I haven't", "Have you been to the practice before?", True),
+        ("yes", "Have you been a patient here before?", False),
+        ("yes sure", "Would you like me to leave a message for the team?", None),
+        ("no", "Is there anything else I can help with?", None),
+        ("I've never been to you before, can I book?", "How can I help?", True),
+        ("I'm an existing patient", "How can I help?", False),
+        ("Are you taking new patients?", "How can I help?", None),
+    ],
+)
+def test_new_or_existing_is_read_from_the_callers_words(said, last_reply, expected):
+    from sophia.agent_text import said_new_or_existing
+
+    assert said_new_or_existing(said, last_reply) is expected
+
+
+def test_a_caller_who_looked_at_urgent_slots_is_steered_back_to_them(conn):
+    """Replayed, a caller who wanted urgent care was registered and booked a routine check up."""
+    session = caller(conn)
+    session.offered_urgent = [{"urgent_slot_id": 3, "when": "11:40 am"}]
+    result = register(session)
+    assert "book_urgent_slot" in result["next"] and "Not a check up" in result["next"]
