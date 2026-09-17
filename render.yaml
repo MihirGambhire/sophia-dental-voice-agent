@@ -40,8 +40,10 @@ services:
         value: gemini
       - key: GEMINI_MODEL
         value: gemini-3.5-flash-lite
+      # Deepgram while testing, to keep the Cartesia accounts' credits for
+      # the real demo. Set to cartesia before it.
       - key: TTS_PROVIDER
-        value: cartesia
+        value: deepgram
       - key: DEEPGRAM_TTS_VOICE
         value: aura-2-pandora-en
       - key: DEEPGRAM_TTS_SPEED
