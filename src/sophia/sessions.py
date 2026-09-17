@@ -53,6 +53,13 @@ class Session:
     db_path: Path | None = None
     built_on: date | None = None
     last_used: float = field(default_factory=time.monotonic)
+    # An open typed conversation, see text_chat.py.
+    chat: object | None = None
+
+    def end_chat(self) -> None:
+        if self.chat is not None:
+            self.chat.close()
+            self.chat = None
 
 
 class SessionStore:
@@ -105,6 +112,7 @@ class SessionStore:
     def reset(self, session: Session) -> Path:
         """Start this tester again from freshly seeded data."""
         with self._lock:
+            session.end_chat()
             session.events.clear()
             self._copy_template(session, self._today())
             return session.db_path
@@ -140,6 +148,7 @@ class SessionStore:
         while len(self._sessions) > self.max_sessions:
             oldest = min(self._sessions.values(), key=lambda s: s.last_used)
             del self._sessions[oldest.id]
+            oldest.end_chat()
             if oldest.db_path is not None:
                 _remove_quietly(oldest.db_path)
 

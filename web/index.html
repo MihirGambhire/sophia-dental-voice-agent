@@ -126,6 +126,32 @@
   .btn-ghost { margin-left: auto; background: transparent; border-color: transparent; color: var(--muted); }
   .btn-ghost:hover:not(:disabled) { color: var(--text); background: var(--raised); border-color: var(--line); }
 
+  .modes {
+    display: inline-grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px;
+    margin-top: 16px; background: var(--bg); border-radius: var(--radius-control);
+  }
+  .mode {
+    display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+    height: 32px; padding: 0 14px; border: 0; border-radius: var(--radius-chip);
+    background: transparent; color: var(--muted); font-weight: 500; font-size: 14px; cursor: pointer;
+  }
+  .mode i { font-size: 16px; }
+  .mode[aria-pressed="true"] { background: var(--raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--line); }
+  .mode:disabled { cursor: not-allowed; opacity: .6; }
+  .mode:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .composer { display: flex; gap: 10px; margin-top: 14px; }
+  .composer input {
+    flex: 1; min-width: 0; height: 44px; padding: 0 14px;
+    border-radius: var(--radius-control); border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); font: inherit;
+  }
+  .composer input::placeholder { color: var(--faint); }
+  .composer input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+  .composer input:disabled { opacity: .6; }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .typing { align-self: flex-start; color: var(--faint); font-size: 13px; margin-left: 4px; }
+
   .err {
     margin-top: 14px; padding: 10px 12px; border-radius: var(--radius-control);
     background: var(--danger-soft); border: 1px solid rgba(240, 113, 103, 0.35);
@@ -250,6 +276,10 @@
         <div>
           <h1 class="call-title" id="call-title">Call the practice</h1>
           <p class="call-lede">Sophia answers like a receptionist: urgent or routine first, then whether you have been a patient before, then your details.</p>
+          <div class="modes" role="group" aria-label="How to talk to Sophia">
+            <button class="mode" id="mode-voice" aria-pressed="true"><i class="ph ph-microphone" aria-hidden="true"></i>Talk</button>
+            <button class="mode" id="mode-type" aria-pressed="false"><i class="ph ph-keyboard" aria-hidden="true"></i>Type</button>
+          </div>
         </div>
         <div class="status" role="status" aria-live="polite">
           <span class="indicator" id="dot"></span>
@@ -259,8 +289,8 @@
       </div>
 
       <div class="controls">
-        <button class="btn btn-primary" id="call"><i class="ph ph-phone" aria-hidden="true"></i>Start call</button>
-        <button class="btn btn-danger" id="hangup" disabled><i class="ph ph-phone-disconnect" aria-hidden="true"></i>Hang up</button>
+        <button class="btn btn-primary" id="call"><i class="ph ph-phone" aria-hidden="true"></i><span>Start call</span></button>
+        <button class="btn btn-danger" id="hangup" disabled><i class="ph ph-phone-disconnect" aria-hidden="true"></i><span>Hang up</span></button>
         <button class="btn btn-ghost" id="reset" title="Puts your patients and appointments back as they started"><i class="ph ph-arrow-counter-clockwise" aria-hidden="true"></i>Reset demo data</button>
       </div>
       <div class="err" id="error" hidden></div>
@@ -273,6 +303,11 @@
             Start a call and say hello. Your conversation appears here as you speak, with the checks Sophia ran on each reply.
           </div>
         </div>
+        <form class="composer" id="composer" hidden autocomplete="off">
+          <label for="message" class="visually-hidden">Message to Sophia</label>
+          <input id="message" maxlength="500" placeholder="Type what you would say. Sophia answers out loud." disabled>
+          <button class="btn btn-primary" id="send" type="submit" disabled><i class="ph ph-paper-plane-right" aria-hidden="true"></i>Send</button>
+        </form>
       </div>
 
       <div class="call-foot" id="setup"></div>
@@ -283,7 +318,7 @@
       <section class="panel guide" aria-labelledby="guide-title">
         <h2 id="guide-title">How to test</h2>
         <ol class="steps">
-          <li><strong>Start a call</strong> and say what you need, for example a check up or toothache.</li>
+          <li><strong>Start a call</strong> and say what you need, for example a check up or toothache. Somewhere you cannot talk? Switch to <strong>Type</strong>: you type, and Sophia still answers out loud.</li>
           <li><strong>Say whether it is urgent</strong>, and whether you have been a patient here before.</li>
           <li><strong>Give your details.</strong> Use a demo patient below, or make up your own as a new patient. Made up postcodes and phone numbers are fine.</li>
         </ol>
@@ -301,7 +336,7 @@
         </div>
 
         <div class="tab-body" role="tabpanel" id="pane-outbound" aria-labelledby="tab-outbound" hidden>
-          <p class="tab-lede">The practice's call list. Press Answer to pick up as the patient, or as someone else in the house.</p>
+          <p class="tab-lede">The practice's call list. Press Answer to pick up as the patient, giving the details shown, or as someone else in the house.</p>
           <div class="list" id="reminders"><div class="loading">Loading the call list...</div></div>
         </div>
       </section>
@@ -534,9 +569,136 @@ function stopPlayback() {
   playHead = ctx ? ctx.currentTime : 0;
 }
 
+// Talk or type. Typing reaches the same Sophia, with the same checks, for
+// testers who cannot speak aloud where they are.
+const modeVoice = document.getElementById('mode-voice');
+const modeType = document.getElementById('mode-type');
+const composer = document.getElementById('composer');
+const messageEl = document.getElementById('message');
+const sendBtn = document.getElementById('send');
+let mode = 'voice';
+let chatting = false;
+let voice = null;             // Sophia's current spoken reply in Type mode
+
+// In Type mode the tester types and Sophia still answers out loud. The
+// server speaks her latest reply; the page never sends the words to say.
+async function speakLatest() {
+  stopVoice();
+  try {
+    const response = await fetch('/api/chat/voice?session=' + S, { cache: 'no-store' });
+    if (!response.ok) return;
+    const url = URL.createObjectURL(await response.blob());
+    if (!chatting) { URL.revokeObjectURL(url); return; }
+    voice = new Audio(url);
+    voice.onended = () => URL.revokeObjectURL(url);
+    await voice.play();
+  } catch (e) { /* the transcript still shows what she said */ }
+}
+
+function stopVoice() {
+  if (voice) { voice.pause(); voice = null; }
+}
+
+function setMode(next) {
+  mode = next;
+  modeVoice.setAttribute('aria-pressed', String(mode === 'voice'));
+  modeType.setAttribute('aria-pressed', String(mode === 'type'));
+  callBtn.querySelector('span').textContent = mode === 'type' ? 'Start chat' : 'Start call';
+  hangBtn.querySelector('span').textContent = mode === 'type' ? 'End chat' : 'Hang up';
+  callBtn.querySelector('i').className = 'ph ' + (mode === 'type' ? 'ph-chat-circle-text' : 'ph-phone');
+  composer.hidden = mode !== 'type';
+  try { localStorage.setItem('sophia-mode', mode); } catch (e) {}
+}
+modeVoice.onclick = () => setMode('voice');
+modeType.onclick = () => setMode('type');
+try { if (localStorage.getItem('sophia-mode') === 'type') setMode('type'); } catch (e) {}
+
+function lockModes(locked) {
+  modeVoice.disabled = locked;
+  modeType.disabled = locked;
+}
+
 callBtn.onclick = () => startCall(null);
 
+async function startChat(reminderId) {
+  showError('');
+  callBtn.disabled = true;
+  lockModes(true);
+  setState('Starting chat', 'connecting');
+  try {
+    const query = `?session=${S}` + (reminderId ? `&reminder=${reminderId}` : '');
+    const response = await fetch('/api/chat/start' + query, { method: 'POST' });
+    if (!response.ok) throw new Error('Could not start the chat.');
+    chatting = true;
+    seen = 0;
+    transcriptEl.innerHTML = '';
+    await poll();
+    setState('Chatting', 'live');
+    startTimer();
+    hangBtn.disabled = false;
+    messageEl.disabled = false;
+    sendBtn.disabled = false;
+    messageEl.focus();
+    speakLatest();
+  } catch (e) {
+    showError(e.message || 'Could not start the chat.');
+    endChat('Not connected');
+  }
+}
+
+composer.onsubmit = async event => {
+  event.preventDefault();
+  const text = messageEl.value.trim();
+  if (!chatting || !text) return;
+  messageEl.value = '';
+  messageEl.disabled = true;
+  sendBtn.disabled = true;
+  stopVoice();
+  showError('');
+  await poll();
+  const typing = el('div', 'typing', 'Sophia is replying...');
+  const mine = el('div', 'turn caller');
+  mine.append(el('div', 'who', 'You'), el('div', 'bubble', text));
+  transcriptEl.append(mine, typing);
+  transcriptEl.scrollTop = transcriptEl.scrollHeight;
+  try {
+    const response = await fetch('/api/chat/say?session=' + S, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }),
+    });
+    if (!response.ok) throw new Error((await response.json()).error || 'Sophia could not reply.');
+    speakLatest();
+  } catch (e) {
+    showError(e.message || 'Sophia could not reply.');
+  } finally {
+    mine.remove();
+    typing.remove();
+    await poll();
+    if (chatting) {
+      messageEl.disabled = false;
+      sendBtn.disabled = false;
+      messageEl.focus();
+    }
+  }
+};
+
+function endChat(message) {
+  stopVoice();
+  if (chatting) fetch('/api/chat/end?session=' + S, { method: 'POST' }).catch(() => {});
+  chatting = false;
+  messageEl.disabled = true;
+  sendBtn.disabled = true;
+  stopTimer();
+  setState(message || 'Chat ended');
+  callBtn.disabled = false;
+  hangBtn.disabled = true;
+  lockModes(false);
+  setTimeout(loadReminders, 300);
+  setTimeout(loadDemoPatients, 300);
+}
+
 async function startCall(reminderId) {
+  if (mode === 'type') return startChat(reminderId);
+  lockModes(true);
   showError('');
   callBtn.disabled = true;
   setState('Asking for the microphone', 'connecting');
@@ -627,12 +789,13 @@ function cleanup(message) {
   setTimeout(loadDemoPatients, 800);
   callBtn.disabled = false;
   hangBtn.disabled = true;
+  lockModes(false);
 }
 
-hangBtn.onclick = () => cleanup('Call ended');
+hangBtn.onclick = () => (chatting ? endChat('Chat ended') : cleanup('Call ended'));
 
 document.getElementById('reset').onclick = async () => {
-  if (ws) { showError('Hang up before resetting the demo data.'); return; }
+  if (ws || chatting) { showError('End the call or chat before resetting the demo data.'); return; }
   try {
     await fetch('/api/reset?session=' + S, { method: 'POST' });
     showError('');
@@ -669,9 +832,17 @@ async function loadReminders() {
       top.appendChild(el('div', 'record-name', call.patient));
       const button = el('button', 'btn btn-small');
       button.innerHTML = '<i class="ph ph-phone-incoming" aria-hidden="true"></i>Answer';
-      button.onclick = () => { if (!ws) startCall(call.id); };
+      button.onclick = () => { if (!ws && !chatting) startCall(call.id); };
       top.appendChild(button);
       row.appendChild(top);
+      const details = el('div', 'record-details');
+      for (const [label, value] of [['Born', call.born], ['Postcode', call.postcode]]) {
+        if (!value) continue;
+        const pair = el('span', null, label);
+        pair.appendChild(el('b', null, value));
+        details.appendChild(pair);
+      }
+      row.appendChild(details);
       const why = call.reason === 'day_before' ? 'Reminder: ' + call.appointment : 'Due a check up';
       row.appendChild(el('div', 'record-hint', why));
       const state = call.status === 'pending' ? 'Not called yet' : (OUTCOME_LABELS[call.outcome] || call.outcome);

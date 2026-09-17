@@ -1062,6 +1062,45 @@ says so.
 
 ---
 
+### 36. A better voice, and two ways testers were locked out
+
+**The voice.** Deepgram's British voices were judged not good enough once
+heard on real calls. A local open source model was ruled out to avoid
+losing quality, and Cartesia's free tier chosen instead. Six British
+voices each said Sophia's real greeting and a booking confirmation, and the
+chosen voice was then generated six more ways, varying speed and emotion,
+all by `scripts/voice_samples.py`. The pick was Julia, sympathetic, at 0.9
+speed. A half configured Cartesia falls back to Deepgram rather than
+leaving a call silent.
+
+**Does it cost time?** Measured on the 999 path, which never reaches the
+model, so only the voice layer differs: caller's last word to first audio
+was a median of 1.58 seconds over six turns, against 1.77 with Deepgram.
+One turn took 5.3 seconds, the very first after the server started, and
+was not repeated in the next five, including the first turn of two new
+calls, so it reads as a one off warm up.
+
+**Locked out by being in public.** A tester somewhere they could not speak
+could not try the demo at all. The page now has a Talk or Type switch.
+Typed messages go to the same agent a call uses, with the same safety
+screen, tools, call stages and transcript, and Sophia still answers out
+loud in the same voice; only speech to text is skipped. A test confirms a
+typed "I can't breathe" gets the 999 advice without the model being asked
+anything. The first version answered in text only, which was not what was
+asked for: the tester wanted to type and still hear her.
+
+The spoken reply is fetched from the server, which only ever speaks
+Sophia's own latest reply in that chat. An endpoint that spoke whatever
+text the page sent would let anyone with the link spend the free voice
+credits on anything they liked, and a test checks text in the request is
+ignored.
+
+**Locked out of reminder calls.** Sophia rings a patient and asks for their
+date of birth and postcode, which a tester answering did not know. The call
+list now shows them beside each name, as a practice's own call sheet would.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns

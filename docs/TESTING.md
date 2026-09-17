@@ -10,6 +10,8 @@ so her phrasing changes from call to call.
 ## Before you start
 
 - Use Chrome or Edge, press **Start call**, and allow the microphone.
+- Somewhere you cannot talk? Switch to **Type** above the call button and
+  chat instead. It is the same Sophia, with the same checks.
 - You can talk over Sophia. She stops when you interrupt her.
 - Say postcodes as letters and numbers, for example "W A 1, 2 N F".
 - Say dates of birth normally, for example "twelfth of March, nineteen
@@ -152,7 +154,8 @@ question.
 Open the **Sophia calls you** tab and press **Answer** next to anyone on
 the list. Who is there depends on the day, because reminders go to
 patients with an appointment tomorrow. Sophia speaks first, as if she has
-rung you. Their details are in the **Demo patients** tab.
+rung you. The date of birth and postcode to give are shown next to each
+name on the list.
 
 - Say you are that patient, give their full name, date of birth and
   postcode, and confirm the appointment. **Correct:** she only mentions the

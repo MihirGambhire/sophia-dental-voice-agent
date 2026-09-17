@@ -74,6 +74,13 @@ def load(conn, reminder_id: int) -> Reminder | None:
     )
 
 
+def _spoken_birth_date(value: str) -> str:
+    from datetime import datetime
+
+    day = datetime.strptime(value, clock.DB_DATE_FORMAT).date()
+    return f"{day.day} {clock._MONTHS[day.month - 1]} {day.year}"
+
+
 def pending(conn) -> list[dict]:
     """
     The call list, for the practice side of the demo page.
@@ -82,7 +89,7 @@ def pending(conn) -> list[dict]:
     never sees it, and neither does the model before verification.
     """
     rows = conn.execute(
-        "SELECT r.id, r.reason, r.status, r.last_outcome, p.full_name, "
+        "SELECT r.id, r.reason, r.status, r.last_outcome, p.full_name, p.dob, p.postcode, "
         "a.start_time, c.name AS clinician "
         "FROM reminder_queue r "
         "JOIN patients p ON p.id = r.patient_id "
@@ -101,6 +108,10 @@ def pending(conn) -> list[dict]:
             {
                 "id": row["id"],
                 "patient": row["full_name"],
+                # So a tester answering the call knows what to say when
+                # Sophia asks. Demo data only, shown on the practice side.
+                "born": _spoken_birth_date(row["dob"]),
+                "postcode": row["postcode"],
                 "reason": row["reason"],
                 "appointment": f"{when} with {row['clinician']}" if when else None,
                 "status": row["status"],
