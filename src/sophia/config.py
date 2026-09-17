@@ -247,7 +247,7 @@ class SpeechSettings:
     # Pandora replaced athena on 17 September 2026. Cartesia's voice was
     # preferred but its free credits ran out in a morning; of Deepgram's
     # voices, Pandora is the British one from the newer Aura-2 generation,
-    # and Aura-2 is what supports a speed setting, 0.7 to 1.5. Slightly
+    # and Aura-2 is what supports a speed setting, 0.7 to 1.5.
     # 0.9 was tried first and found too slow. Empty means the default.
     tts_speed: str = field(default_factory=lambda: _env("DEEPGRAM_TTS_SPEED", "1.0"))
 
