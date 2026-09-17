@@ -242,8 +242,14 @@ class SpeechSettings:
     # is the newer aura-2 generation but reads breathier, which is wrong
     # for someone taking a medical booking.
     tts_voice: str = field(
-        default_factory=lambda: _env("DEEPGRAM_TTS_VOICE", "aura-athena-en")
+        default_factory=lambda: _env("DEEPGRAM_TTS_VOICE", "aura-2-pandora-en")
     )
+    # Pandora replaced athena on 17 September 2026. Cartesia's voice was
+    # preferred but its free credits ran out in a morning; of Deepgram's
+    # voices, Pandora is the British one from the newer Aura-2 generation,
+    # and Aura-2 is what supports a speed setting, 0.7 to 1.5. Slightly
+    # slower was the preference with Cartesia too. Empty means the default.
+    tts_speed: str = field(default_factory=lambda: _env("DEEPGRAM_TTS_SPEED", "0.9"))
 
     # Which service speaks for Sophia: deepgram or cartesia. Deepgram's
     # British voices were judged not good enough once people heard them on

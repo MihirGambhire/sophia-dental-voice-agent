@@ -787,3 +787,21 @@ def test_the_page_shows_the_practice_clock(hour, minute, expected):
 
     shown = voice_app._practice_clock(clock.combine(date(2026, 9, 21), time(hour, minute)))
     assert shown == {"practice_time": f"{hour:02d}:{minute:02d}", "practice_status": expected}
+
+
+def test_pandora_speaks_at_the_chosen_speed(monkeypatch):
+    from pipecat.services.deepgram.tts import DeepgramTTSService
+    from sophia import voice_app
+
+    monkeypatch.setattr(voice_app.config, "SPEECH", _speech(tts_voice="aura-2-pandora-en", tts_speed="0.9"))
+    tts = voice_app.build_tts()
+    assert isinstance(tts, DeepgramTTSService)
+    assert tts._settings.voice == "aura-2-pandora-en"
+    assert tts._settings.speed == 0.9
+
+
+def test_an_older_voice_gets_no_speed_it_cannot_use(monkeypatch):
+    from sophia import voice_app
+
+    monkeypatch.setattr(voice_app.config, "SPEECH", _speech(tts_voice="aura-athena-en", tts_speed="0.9"))
+    assert voice_app.build_tts()._settings.speed is None

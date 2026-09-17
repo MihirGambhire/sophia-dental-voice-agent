@@ -25,7 +25,11 @@ services:
       - key: GEMINI_MODEL
         value: gemini-3.5-flash-lite
       - key: TTS_PROVIDER
-        value: cartesia
+        value: deepgram
+      - key: DEEPGRAM_TTS_VOICE
+        value: aura-2-pandora-en
+      - key: DEEPGRAM_TTS_SPEED
+        value: "0.9"
       - key: CARTESIA_VOICE_ID
         value: 273f9ef7-9fc2-4def-88bb-ab108c6249ca
       - key: CARTESIA_SPEED

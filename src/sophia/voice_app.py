@@ -446,9 +446,17 @@ def build_tts():
 
 
 def _deepgram_tts():
+    speech = config.SPEECH
+    speed = None
+    # Only Aura-2 voices accept a speed; an older voice is left at its own pace.
+    if speech.tts_speed and speech.tts_voice.startswith("aura-2-"):
+        try:
+            speed = min(1.5, max(0.7, float(speech.tts_speed)))
+        except ValueError:
+            logger.warning(f"DEEPGRAM_TTS_SPEED {speech.tts_speed!r} is not a number; using the default")
     return DeepgramTTSService(
-        api_key=config.SPEECH.deepgram_api_key,
-        settings=DeepgramTTSSettings(voice=config.SPEECH.tts_voice),
+        api_key=speech.deepgram_api_key,
+        settings=DeepgramTTSSettings(voice=speech.tts_voice, speed=speed),
     )
 
 
