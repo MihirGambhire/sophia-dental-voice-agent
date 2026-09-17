@@ -1,0 +1,15 @@
+# What the hosted server needs, and nothing it does not.
+#
+# The same pins as requirements.txt, without pytest and without Pipecat's
+# webrtc and runner extras. Calls travel over a WebSocket; WebRTC is only
+# imported for calls on the same machine, and leaving it out keeps the
+# server small enough for a free hosting instance.
+
+python-dotenv==1.2.3
+tzdata==2026.4
+google-genai==2.23.0
+groq==1.7.0
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+pydantic==2.13.5
+pipecat-ai[deepgram]==1.10.0

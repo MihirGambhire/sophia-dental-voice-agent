@@ -62,9 +62,6 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.deepgram.stt import DeepgramSTTService, DeepgramSTTSettings
 from pipecat.services.deepgram.tts import DeepgramTTSService, DeepgramTTSSettings
 from pipecat.transports.base_transport import TransportParams
-from aiortc import RTCIceServer
-from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
-from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketParams,
     FastAPIWebsocketTransport,
@@ -515,15 +512,22 @@ def _turn_preference(url: str) -> int:
     return 3
 
 
-def _aiortc_ice_servers() -> list[RTCIceServer]:
+def _aiortc_ice_servers() -> list:
     """
     The same ICE list as the browser gets, in aiortc's shape and order.
+
+    WebRTC is imported only here and in the offer route. It is kept for
+    calls on the same machine, but the page uses the WebSocket, and leaving
+    the WebRTC libraries out keeps the deployed server small enough for a
+    free hosting instance.
 
     STUN entries are kept as they are. All TURN URLs that share credentials
     are merged into one entry sorted by _turn_preference, because aiortc
     picks the first TURN URL across the whole list.
     """
-    stun: list[RTCIceServer] = []
+    from aiortc import RTCIceServer
+
+    stun: list = []
     turn_urls: list[str] = []
     username = credential = None
 
@@ -659,6 +663,9 @@ def create_app() -> FastAPI:
         store = app.state.sessions
         caller = store.get(session)
         caller.events.clear()
+
+        from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
+        from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 
         # Without TURN here, the server offers only candidates on its own
         # network, which a caller anywhere else cannot reach. The call

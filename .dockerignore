@@ -1,0 +1,20 @@
+# Never in the image
+.env
+*.private.md
+SOPHIA_PROJECT_CONTEXT.md
+
+# Not needed to run the server
+.git
+.venv
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+tests
+evals
+scripts
+docs
+data/sessions
+data/voice_samples
+data/sophia.db*
+graphify-out

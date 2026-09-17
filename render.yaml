@@ -1,0 +1,36 @@
+# Render Blueprint for Sophia's voice server.
+#
+# Secrets are marked sync: false, so Render asks for them when the
+# Blueprint is created and they never live in this file or in git.
+services:
+  - name: sophia-dental-voice-agent
+    type: web
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: DEEPGRAM_API_KEY
+        sync: false
+      - key: CARTESIA_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GEMINI_MODEL
+        value: gemini-3.5-flash-lite
+      - key: TTS_PROVIDER
+        value: cartesia
+      - key: CARTESIA_VOICE_ID
+        value: 273f9ef7-9fc2-4def-88bb-ab108c6249ca
+      - key: CARTESIA_SPEED
+        value: "0.9"
+      - key: CARTESIA_EMOTION
+        value: sympathetic
+      - key: SOPHIA_DEMO_DETAILS
+        value: "true"

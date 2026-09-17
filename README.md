@@ -203,7 +203,7 @@ Unit tests prove the loop, the tools and the guard rails. They cannot
 prove what the real model does with a real caller, which is where nearly
 every serious bug in this project was found. So there are two layers.
 
-**580 unit tests**, run with no API key and no network:
+**584 unit tests**, run with no API key and no network:
 
 ```bash
 python -m pytest -q
@@ -301,7 +301,15 @@ Then open http://localhost:7861, press Start call, and allow the microphone.
 The call list on the page places outbound reminder calls: press Answer to
 play the person picking up.
 
-**Share it with other people.** A Cloudflare quick tunnel gives the local
+**Host it without a laptop.** `render.yaml`, the `Dockerfile` and a lean
+`requirements-deploy.txt` deploy the voice server to Render's free tier,
+straight from this repository. In Render, choose New, then Blueprint, pick
+the repository, and paste the four API keys when asked; they are never
+stored in the repository. A free instance sleeps after 15 minutes without
+traffic and takes about a minute to wake, so open the link a minute before
+anyone needs it.
+
+**Share it from a laptop instead.** A Cloudflare quick tunnel gives the local
 server a public HTTPS address, free and with no account:
 
 ```bash
@@ -390,7 +398,7 @@ src/sophia/
   web_audio.py      The wire format for call audio
 evals/              The scenario suite: framework and scripted calls
 scripts/            init_db, chat, check_setup, list_models, run_evals
-tests/              580 unit tests
+tests/              584 unit tests
 web/                The call page, transcript and outbound call list
 docs/               Engineering log, evaluation results, architecture diagram
 ```
