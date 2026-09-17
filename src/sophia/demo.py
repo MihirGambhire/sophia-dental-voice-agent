@@ -71,3 +71,68 @@ def patient_cards(conn, now: datetime | None = None) -> list[dict]:
             }
         )
     return cards
+
+
+def practice_card(conn) -> dict:
+    """
+    The practice facts Sophia works from, for testers to check her against.
+
+    Built from the same configuration and fee table her tools read, not
+    typed out separately, so the page cannot drift from what she says.
+    """
+    from . import config, policies
+
+    fees = {"nhs": [], "private": []}
+    for row in conn.execute(
+        "SELECT name, funding, fee_gbp, fee_is_from, is_bookable FROM appointment_types ORDER BY funding, fee_gbp"
+    ):
+        fees[row["funding"]].append(
+            {
+                "name": row["name"],
+                "fee": policies.format_fee(row["fee_gbp"], bool(row["fee_is_from"])),
+                "bookable_by_phone": bool(row["is_bookable"]),
+            }
+        )
+
+    def twelve_hour(value: str) -> str:
+        hour, minute = (int(part) for part in value.split(":"))
+        suffix = "am" if hour < 12 else "pm"
+        hour = hour % 12 or 12
+        return f"{hour}{':%02d' % minute if minute else ''}{suffix}"
+
+    return {
+        "hours": [
+            {
+                "days": "Monday to Friday",
+                "times": f"{twelve_hour(config.OPENING_TIME)} to {twelve_hour(config.CLOSING_TIME)}, "
+                f"closed {twelve_hour(config.LUNCH_START)} to {twelve_hour(config.LUNCH_END)} for lunch",
+            },
+            {"days": "Saturday and Sunday", "times": "Closed"},
+        ],
+        "contact": [
+            {"label": "Practice phone", "value": config.PRACTICE_PHONE},
+            {"label": "Address", "value": config.PRACTICE_ADDRESS},
+            {"label": "Parking", "value": "Nearby, not on site"},
+            {"label": "Out of hours dental", "value": config.OUT_OF_HOURS_DENTAL_NUMBER},
+            {"label": "NHS urgent advice", "value": config.NHS_URGENT_NUMBER},
+            {"label": "Life threatening emergency", "value": config.EMERGENCY_NUMBER},
+        ],
+        "rules": [
+            f"Urgent appointments: a limited number each weekday, released by phone from "
+            f"{twelve_hour(config.URGENT_RELEASE_TIME)} on the day and not bookable ahead. Open to "
+            "patients and to people with no regular dentist.",
+            "New NHS patients: places are very limited and the waiting list is paused. New private "
+            "patients are welcome.",
+            f"Registration lapses after {config.REGISTRATION_LAPSE_YEARS} years without attending, "
+            "and the patient is then treated as new.",
+            f"Cancelling needs at least {config.SHORT_NOTICE_HOURS} hours notice. Less is a short "
+            "notice cancellation, and repeated late cancellations or missed appointments can mean "
+            "removal from the patient list.",
+            "Sophia cannot give clinical or medicine advice, and cannot take payment.",
+        ],
+        "fees": fees,
+        "not_priced": (
+            "Private fillings, imaging, implants, whitening, crowns, orthodontics and dentures are not "
+            "priced here. Asked about them, Sophia should take a message rather than give a figure."
+        ),
+    }

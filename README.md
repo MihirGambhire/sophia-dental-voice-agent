@@ -203,7 +203,7 @@ Unit tests prove the loop, the tools and the guard rails. They cannot
 prove what the real model does with a real caller, which is where nearly
 every serious bug in this project was found. So there are two layers.
 
-**579 unit tests**, run with no API key and no network:
+**580 unit tests**, run with no API key and no network:
 
 ```bash
 python -m pytest -q
@@ -390,7 +390,7 @@ src/sophia/
   web_audio.py      The wire format for call audio
 evals/              The scenario suite: framework and scripted calls
 scripts/            init_db, chat, check_setup, list_models, run_evals
-tests/              579 unit tests
+tests/              580 unit tests
 web/                The call page, transcript and outbound call list
 docs/               Engineering log, evaluation results, architecture diagram
 ```

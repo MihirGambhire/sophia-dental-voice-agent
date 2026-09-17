@@ -614,6 +614,16 @@ def create_app() -> FastAPI:
         finally:
             conn.close()
 
+    @app.get("/api/practice-info")
+    async def practice_info(session: str | None = None):
+        """The facts and fees Sophia works from, for testers to check her against."""
+        store = app.state.sessions
+        conn = db.connect(store.database(store.get(session)))
+        try:
+            return demo.practice_card(conn)
+        finally:
+            conn.close()
+
     @app.post("/api/reset")
     async def reset(session: str | None = None):
         """Put this tester's patients and appointments back as they started."""

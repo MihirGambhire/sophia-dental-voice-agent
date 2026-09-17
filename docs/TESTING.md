@@ -19,8 +19,10 @@ so her phrasing changes from call to call.
   fifty eight".
 - Your fake patients are your own copy. Nobody else's call changes them.
   **Reset my demo data** on the page puts them back as they started.
-- The **Demo patients** tab on the page lists every patient below, with
-  what to try and their next appointment.
+- The **Patients** tab on the page lists every patient below, with what
+  to try and their next appointment.
+- The **Practice info** tab shows the opening hours, contacts, rules and
+  every fee Sophia works from, so her answers can be checked against them.
 - Sophia follows a receptionist's order: first whether it is urgent, then
   whether you have been a patient before, then your details. Answering
   both up front ("it's routine, and I've been before") saves a step.

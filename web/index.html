@@ -197,7 +197,7 @@
   .steps strong { color: var(--text); font-weight: 500; }
 
   .tabs-panel { padding: 8px 8px 12px; }
-  .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: var(--bg); border-radius: var(--radius-control); }
+  .tabs { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; padding: 4px; background: var(--bg); border-radius: var(--radius-control); }
   .tab {
     height: 36px; border: 0; border-radius: var(--radius-chip); cursor: pointer;
     background: transparent; color: var(--muted); font-weight: 500; font-size: 14px;
@@ -205,6 +205,17 @@
   .tab[aria-selected="true"] { background: var(--raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--line); }
   .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .tab-body { padding: 14px 12px 0; }
+  .info h3 { margin: 16px 0 8px; font-size: 13px; font-weight: 600; color: var(--muted); }
+  .info h3:first-child { margin-top: 0; }
+  .kv { display: grid; grid-template-columns: minmax(0, 44%) minmax(0, 1fr); gap: 6px 12px; font-size: 13.5px; }
+  .kv dt { color: var(--faint); }
+  .kv dd { margin: 0; color: var(--text); }
+  .fees { display: grid; gap: 2px; font-size: 13.5px; }
+  .fee-row { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; }
+  .fee-row + .fee-row { border-top: 1px solid var(--line-soft); }
+  .fee-row b { font-family: var(--mono); font-weight: 400; white-space: nowrap; }
+  .fee-note { color: var(--faint); font-size: 12px; margin-left: 6px; }
+  .rules { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 13.5px; color: var(--muted); }
   .tab-lede { margin: 0 0 12px; color: var(--muted); font-size: 13.5px; }
   .list { display: grid; gap: 8px; max-height: calc(100dvh - 400px); min-height: 160px; overflow-y: auto; padding-right: 2px; }
   @media (max-width: 979px) { .list { max-height: none; } }
@@ -310,13 +321,19 @@
 
       <section class="panel tabs-panel">
         <div class="tabs" role="tablist" aria-label="Test data">
-          <button class="tab" role="tab" id="tab-patients" aria-controls="pane-patients" aria-selected="true">Demo patients</button>
-          <button class="tab" role="tab" id="tab-outbound" aria-controls="pane-outbound" aria-selected="false">Sophia calls you</button>
+          <button class="tab" role="tab" id="tab-patients" aria-controls="pane-patients" aria-selected="true">Patients</button>
+          <button class="tab" role="tab" id="tab-practice" aria-controls="pane-practice" aria-selected="false">Practice info</button>
+          <button class="tab" role="tab" id="tab-outbound" aria-controls="pane-outbound" aria-selected="false">Sophia calls</button>
         </div>
 
         <div class="tab-body" role="tabpanel" id="pane-patients" aria-labelledby="tab-patients">
           <p class="tab-lede">Invented records to call as. Anyone you register appears here too, so you can call back as them.</p>
           <div class="list" id="demo-patients"><div class="loading">Loading patients...</div></div>
+        </div>
+
+        <div class="tab-body" role="tabpanel" id="pane-practice" aria-labelledby="tab-practice" hidden>
+          <p class="tab-lede">The facts and fees Sophia works from. Check her answers against these.</p>
+          <div class="list info" id="practice"><div class="loading">Loading practice information...</div></div>
         </div>
 
         <div class="tab-body" role="tabpanel" id="pane-outbound" aria-labelledby="tab-outbound" hidden>
@@ -408,6 +425,7 @@ function emptyState(message, icon) {
 // Tabs
 const tabs = [
   [document.getElementById('tab-patients'), document.getElementById('pane-patients')],
+  [document.getElementById('tab-practice'), document.getElementById('pane-practice')],
   [document.getElementById('tab-outbound'), document.getElementById('pane-outbound')],
 ];
 function selectTab(index) {
@@ -418,7 +436,7 @@ function selectTab(index) {
   try { localStorage.setItem('sophia-tab', String(index)); } catch (e) {}
 }
 tabs.forEach(([tab], i) => { tab.onclick = () => selectTab(i); });
-try { const saved = Number(localStorage.getItem('sophia-tab')); if (saved === 1) selectTab(1); } catch (e) {}
+try { const saved = Number(localStorage.getItem('sophia-tab')); if (saved > 0 && saved < tabs.length) selectTab(saved); } catch (e) {}
 
 fetch('/api/health').then(r => r.json()).then(info => {
   setupEl.innerHTML = '';
@@ -787,8 +805,53 @@ async function loadDemoPatients() {
   }
 }
 
+async function loadPracticeInfo() {
+  const box = document.getElementById('practice');
+  try {
+    const info = await (await fetch('/api/practice-info?session=' + S)).json();
+    box.innerHTML = '';
+
+    const section = title => { box.appendChild(el('h3', null, title)); };
+    const pairs = rows => {
+      const list = el('dl', 'kv');
+      for (const [label, value] of rows) list.append(el('dt', null, label), el('dd', null, value));
+      box.appendChild(list);
+    };
+    const feeList = items => {
+      const list = el('div', 'fees');
+      for (const item of items) {
+        const row = el('div', 'fee-row');
+        const name = el('span', null, item.name);
+        if (!item.bookable_by_phone) name.appendChild(el('span', 'fee-note', 'quote only'));
+        row.append(name, el('b', null, item.fee));
+        list.appendChild(row);
+      }
+      box.appendChild(list);
+    };
+
+    section('Opening hours');
+    pairs(info.hours.map(h => [h.days, h.times]));
+    section('Contact');
+    pairs(info.contact.map(c => [c.label, c.value]));
+    section('Rules Sophia follows');
+    const rules = el('ul', 'rules');
+    for (const rule of info.rules) rules.appendChild(el('li', null, rule));
+    box.appendChild(rules);
+    section('NHS charges');
+    feeList(info.fees.nhs);
+    section('Private fees');
+    feeList(info.fees.private);
+    section('Not priced');
+    box.appendChild(el('p', 'tab-lede', info.not_priced));
+  } catch (e) {
+    box.innerHTML = '';
+    box.appendChild(el('div', 'loading', 'Could not load the practice information.'));
+  }
+}
+
 loadReminders();
 loadDemoPatients();
+loadPracticeInfo();
 </script>
 </body>
 </html>

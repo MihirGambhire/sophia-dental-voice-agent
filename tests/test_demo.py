@@ -91,3 +91,15 @@ def test_a_call_sophia_placed_has_no_inbound_stage(conn):
     sophia = agent(conn)
     sophia.reminder = object()
     assert sophia._call_stage() == ""
+
+
+def test_the_practice_panel_shows_the_facts_sophia_works_from(conn):
+    card = demo.practice_card(conn)
+
+    assert card["hours"][0]["times"] == "8am to 6pm, closed 1pm to 2pm for lunch"
+    assert {"label": "Practice phone", "value": "01925 630221"} in card["contact"]
+    nhs = {fee["name"]: fee["fee"] for fee in card["fees"]["nhs"]}
+    private = {fee["name"]: fee["fee"] for fee in card["fees"]["private"]}
+    assert nhs["NHS examination and diagnosis"] == "£27.90"
+    assert private["New patient examination"] == "£85"
+    assert any("waiting list is paused" in rule for rule in card["rules"])
