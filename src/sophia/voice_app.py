@@ -539,6 +539,13 @@ def build_pipeline(
             punctuate=True,
             interim_results=True,
         ),
+        # The caller's audio stops here. Nothing after speech to text uses
+        # it, and passing 50 frames a second on through Sophia and every
+        # voice behind the switch cost CPU that Render's free plan (less
+        # than one CPU) does not have: on a live call the delay grew with
+        # every turn, from 3 seconds to 8.6, on a turn that never reached
+        # the model.
+        audio_passthrough=False,
     )
 
     voices: list = []
