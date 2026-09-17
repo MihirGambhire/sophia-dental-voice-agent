@@ -216,6 +216,9 @@ class SophiaAgent:
         about forty tokens and removes the need for any of that.
         """
         lines = ["CALL STATE, carried forward. Do not call tools to rediscover this."]
+        stage = self._call_stage()
+        if stage:
+            lines.append(stage)
 
         if self.reminder is not None:
             lines.append(outbound.call_context(self.reminder))
@@ -240,11 +243,6 @@ class SophiaAgent:
             for slot in self.tools.offered_urgent:
                 lines.append(f"  {slot['when']} id={slot['urgent_slot_id']}")
 
-        if self.last_screening and self.last_screening.level is safety.Level.URGENT:
-            lines.append(
-                "The caller has described a same day problem. Offer today's urgent "
-                "appointments, not a routine check up."
-            )
 
         if self.tools.bookings_made:
             lines.append("Already booked on this call:")
@@ -257,6 +255,41 @@ class SophiaAgent:
             )
 
         return "\n".join(lines)
+
+    def _call_stage(self) -> str:
+        """
+        Where the call is in the order every call follows, and the next step.
+
+        Testers found conversations wandering: details asked for before
+        anyone knew whether the caller was new, and new or existing never
+        asked at all. The order is in the prompt, but the step the call has
+        reached is worked out here from what has actually happened, so the
+        model is told it every turn rather than left to remember it.
+        """
+        if self.reminder is not None:
+            return ""  # a call Sophia placed follows its own context
+        screening = self.last_screening
+        if screening is not None and screening.level is safety.Level.EMERGENCY:
+            return (
+                "STAGE: EMERGENCY. 999 advice has been given. Do not book or take details "
+                "unless they say it is not an emergency; if asked, repeat the advice."
+            )
+        tools = self.tools
+        if tools.verified_patient_id in tools.registered_patient_ids:
+            return "STAGE 4: new patient registered. Help with what they called about."
+        if tools.verified_patient_id:
+            return "STAGE 4: existing patient verified. Help with what they called about."
+        urgency = (
+            "They described a same day problem, so offer today's urgent appointments, not a routine check up. "
+            if screening is not None and screening.level is safety.Level.URGENT
+            else "If they want an appointment and have not said why, first ask whether it needs seeing today. "
+        )
+        return (
+            "STAGE 1 to 3: caller not identified. General questions need no details. "
+            f"For appointments or records: {urgency}Then ask whether they have been a patient "
+            "here before, unless they said. Existing: name, date of birth, postcode, "
+            "verify_patient. New: name, date of birth, postcode, phone, register_new_patient."
+        )
 
     def _compact_history(self) -> None:
         """

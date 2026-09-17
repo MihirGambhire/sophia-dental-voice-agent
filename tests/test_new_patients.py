@@ -12,7 +12,7 @@ from datetime import date, time, timedelta
 
 import pytest
 
-from sophia import clock
+from sophia import clock, config
 from sophia.tools import SophiaTools, ToolError
 
 MONDAY_10 = clock.combine(date(2026, 9, 21), time(10))
@@ -34,6 +34,12 @@ def caller(conn, said=NEW_CALLER, when=MONDAY_10):
 
 def register(session, name="Priya Sharma", dob="1990-05-04", postcode="WA1 3BX", phone="07700 900123"):
     return session.register_new_patient(name, dob, postcode, phone)
+
+
+@pytest.fixture
+def strict_details(monkeypatch):
+    """Real UK formats required, as outside the demo."""
+    monkeypatch.setattr(config, "DEMO_RELAXED_DETAILS", False)
 
 
 def patients(conn) -> int:
@@ -190,13 +196,13 @@ def test_an_impossible_date_of_birth_is_refused(conn, dob):
     assert register(caller(conn), dob=dob)["reason"] == "date_not_understood"
 
 
-def test_a_postcode_that_is_not_a_uk_postcode_is_refused(conn):
+def test_a_postcode_that_is_not_a_uk_postcode_is_refused(conn, strict_details):
     said = [*NEW_CALLER[:3], "12345", NEW_CALLER[4]]
     assert register(caller(conn, said=said), postcode="12345")["reason"] == "postcode_not_understood"
 
 
 @pytest.mark.parametrize("phone", ["12345", "07700 9001", "not a number"])
-def test_a_phone_number_that_is_not_a_uk_number_is_refused(conn, phone):
+def test_a_phone_number_that_is_not_a_uk_number_is_refused(conn, phone, strict_details):
     assert register(caller(conn), phone=phone)["reason"] == "phone_not_understood"
 
 
@@ -402,3 +408,37 @@ def test_may_as_a_word_is_not_taken_as_the_month(conn):
 def test_a_date_that_can_only_be_read_one_way_needs_no_confirming(conn):
     said = ["Priya Sharma", "25/04/1990", "W A 1, 3 B X", "07700 900123"]
     assert register(caller(conn, said=said), dob="1990-04-25")["registered"] is True
+
+
+# ---------------------------------------------------------------------------
+# Made up details, allowed for demo testers
+# ---------------------------------------------------------------------------
+
+
+def test_a_demo_tester_can_register_with_a_made_up_postcode_and_number(conn):
+    """Testers on the shared link were refused for not having a real UK postcode."""
+    said = ["Test Person", "first of January nineteen ninety", "one two three four five", "one two three four five six"]
+    result = register(caller(conn, said=said), name="Test Person", dob="1990-01-01", postcode="12345", phone="123456")
+
+    assert result["registered"] is True
+    row = conn.execute("SELECT postcode, phone FROM patients WHERE id = ?", (result["patient_id"],)).fetchone()
+    assert row["postcode"] == "12345"
+    assert row["phone"] == "123456"
+
+
+def test_made_up_details_must_still_be_what_the_caller_said(conn):
+    said = ["Test Person", "first of January nineteen ninety", "one two three four five", "one two three four five six"]
+    result = register(caller(conn, said=said), name="Test Person", dob="1990-01-01", postcode="99999", phone="123456")
+    assert result["reason"] == "missing_details"
+
+
+def test_a_made_up_number_still_needs_enough_digits(conn):
+    said = ["Test Person", "first of January nineteen ninety", "A B 1", "one two three"]
+    result = register(caller(conn, said=said), name="Test Person", dob="1990-01-01", postcode="AB1", phone="123")
+    assert result["reason"] == "phone_not_understood"
+
+
+def test_existing_patients_still_need_their_real_postcode_in_the_demo(conn):
+    """Relaxing new patients' formats must not relax who counts as an existing patient."""
+    session = caller(conn, said=["Margaret Hollis, 12 March 1958, one two three four five"])
+    assert session.verify_patient("Margaret Hollis", "1958-03-12", "12345")["verified"] is False

@@ -70,7 +70,7 @@ from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketTransport,
 )
 
-from . import config, db, outbound, prompts, providers, sessions, web_audio
+from . import config, db, demo, outbound, prompts, providers, sessions, web_audio
 from .agent_text import SophiaAgent
 
 
@@ -551,6 +551,16 @@ def create_app() -> FastAPI:
         conn = db.connect(store.database(store.get(session)))
         try:
             return {"calls": outbound.pending(conn)}
+        finally:
+            conn.close()
+
+    @app.get("/api/demo-patients")
+    async def demo_patients(session: str | None = None):
+        """The fake records a tester can call as, including any they registered."""
+        store = app.state.sessions
+        conn = db.connect(store.database(store.get(session)))
+        try:
+            return {"patients": demo.patient_cards(conn)}
         finally:
             conn.close()
 

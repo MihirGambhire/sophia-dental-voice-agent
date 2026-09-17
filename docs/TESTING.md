@@ -16,6 +16,11 @@ so her phrasing changes from call to call.
   fifty eight".
 - Your fake patients are your own copy. Nobody else's call changes them.
   **Reset my demo data** on the page puts them back as they started.
+- The **Demo patients** panel on the page lists every patient below, with
+  what to try and their next appointment.
+- Sophia follows a receptionist's order: first whether it is urgent, then
+  whether you have been a patient before, then your details. Answering
+  both up front ("it's routine, and I've been before") saves a step.
 
 ## The fake patients
 
@@ -84,11 +89,12 @@ away, for example when testing on a Friday, no warning is the right answer.
 ## 5. Calling as someone new
 
 Use your own name and details, or make some up. You are not on the list.
+Made up postcodes and phone numbers are fine, for example postcode "one two
+three four five" and phone "one two three four five six".
 
 1. "I'd like to book a check up."
-2. Give your name, date of birth and postcode.
-3. When she cannot find you, say you have never been before, and give a
-   phone number.
+2. When she asks whether you have been before, say no.
+3. Give your name, date of birth, postcode and phone number as she asks.
 
 **Correct:** she sets you up as a **new private patient** and offers the
 **£85 new patient examination**. After you pick a time, she says the team
@@ -105,6 +111,10 @@ Try one more: give **Margaret Hollis**'s name and date of birth with a
 
 **Correct:** she does **not** set you up as a new patient, and does not
 say whether Margaret is on the list. She offers to take a message.
+
+Anyone you register now appears in the **Demo patients** panel. Hang up,
+start a new call, say you have been before, and give their details: you
+are now an existing patient, with the appointment you booked.
 
 ## 6. The wrong date of birth
 

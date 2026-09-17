@@ -222,10 +222,11 @@ src/sophia/
   outbound.py   reminder and recall calls
   voice_app.py  Pipecat pipeline, turn taking, web server
   sessions.py   per tester database copy and transcript
+  demo.py       the demo patient list shown to testers
   web_audio.py  PCM wire format for the WebSocket
 evals/          live scenario suite, framework and scenarios
 scripts/        init_db, chat, check_setup, list_models, run_evals
-tests/          539 tests, no API key needed
+tests/          552 tests, no API key needed
 web/            call page
 ```
 

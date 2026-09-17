@@ -111,6 +111,15 @@ NEW_PATIENT_SNC_LIMIT = 2
 
 DB_PATH = ROOT_DIR / _env("SOPHIA_DB_PATH", "data/sophia.db")
 
+# Demo only. People testing the link call as a new patient with made up
+# details, and were refused for a postcode or phone number that is not a
+# real UK one. With this on, a new patient's postcode need only be a short
+# run of letters and numbers, and a phone number six to fifteen digits.
+# They must still be details the caller actually said, and existing
+# patients are always checked against their record. Set
+# SOPHIA_DEMO_DETAILS=false to require real UK formats.
+DEMO_RELAXED_DETAILS = _env("SOPHIA_DEMO_DETAILS", "true").strip().lower() not in ("false", "0", "no", "off")
+
 
 # ---------------------------------------------------------------------------
 # Models

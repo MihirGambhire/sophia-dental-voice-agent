@@ -111,6 +111,17 @@
   </div>
 
   <div class="card">
+    <h2>Demo patients</h2>
+    <div class="meta" style="margin:-4px 0 12px">
+      Made up records to test with. A real practice system would never show these. When
+      Sophia asks whether you have been before, say yes and give one of these, or say no
+      and make up your own details as a new patient. Anyone you register appears here, so
+      you can call back as them.
+    </div>
+    <div id="demo-patients"><div class="empty">Loading...</div></div>
+  </div>
+
+  <div class="card">
     <h2>Outbound reminder calls</h2>
     <div class="meta" style="margin:-4px 0 12px">
       The practice's call list. Press <b>Answer</b> to play the person picking up the phone.
@@ -395,6 +406,7 @@ function cleanup(message) {
   if (ctx) { ctx.close(); ctx = null; }
   setState(message || 'Not connected');
   setTimeout(loadReminders, 800);
+  setTimeout(loadDemoPatients, 800);
   callBtn.disabled = false;
   hangBtn.disabled = true;
 }
@@ -408,6 +420,7 @@ document.getElementById('reset').onclick = async () => {
     transcriptEl.innerHTML = '<div class="empty">Demo data reset. Start the call and say hello.</div>';
     seen = 0;
     loadReminders();
+    loadDemoPatients();
   } catch (e) { showError('Could not reset the demo data.'); }
 };
 
@@ -449,6 +462,37 @@ async function loadReminders() {
   }
 }
 loadReminders();
+
+async function loadDemoPatients() {
+  const list = document.getElementById('demo-patients');
+  try {
+    const { patients } = await (await fetch('/api/demo-patients?session=' + S)).json();
+    list.innerHTML = '';
+    for (const patient of patients) {
+      const row = document.createElement('div');
+      row.className = 'call-row';
+      const info = document.createElement('div');
+      const name = document.createElement('div');
+      name.className = 'who-call';
+      name.textContent = patient.name;
+      const details = document.createElement('div');
+      details.className = 'meta';
+      details.style.marginTop = '0';
+      details.textContent = 'Born ' + patient.born + '  |  Postcode ' + patient.postcode +
+        (patient.phone ? '  |  Phone ' + patient.phone : '');
+      const hint = document.createElement('div');
+      hint.className = 'meta';
+      hint.style.marginTop = '2px';
+      hint.textContent = patient.try + (patient.next_appointment ? '  Next appointment: ' + patient.next_appointment + '.' : '');
+      info.append(name, details, hint);
+      row.append(info);
+      list.appendChild(row);
+    }
+  } catch (e) {
+    list.innerHTML = '<div class="empty">Could not load the demo patients.</div>';
+  }
+}
+loadDemoPatients();
 </script>
 </body>
 </html>

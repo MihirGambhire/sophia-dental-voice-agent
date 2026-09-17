@@ -1026,6 +1026,42 @@ the budget.
 
 ---
 
+### 35. Testers found the calls wandering, and half the flows untestable
+
+**What testers reported.** Three things. The conversation did not feel
+like a receptionist: details were asked for before anyone knew whether the
+caller was new, and whether something was urgent was never settled first.
+New patients giving made up postcodes and phone numbers, as anyone testing
+a demo does, were refused for not being real UK ones. And nobody testing
+knew who the existing patients were, so every flow for an existing
+patient, from fees to cancellation warnings, could not be tried at all.
+
+**The order.** Every call now follows the same steps: urgent or routine,
+then new or existing, then verification or registration, then help, with
+general questions answerable at any point. The order is in the prompt, but
+a rule in a prompt is a preference (see every entry above), so the step
+the call has actually reached is worked out in code from what has
+happened: whether 999 advice was given, whether a same day problem was
+described, whether the caller is verified or newly registered. That line is
+sent to the model every turn, next to the rest of the call state.
+
+**Made up details.** A demo setting, on by default, lets a new patient's
+postcode be any short run of letters and numbers and their phone number
+any six to fifteen digits. Two things deliberately do not relax: the
+details must still be ones the caller actually said, because the point of
+that check is the model inventing values, not callers; and existing
+patients are still matched against their record exactly as before, which
+has a test of its own.
+
+**Something to test with.** The page now lists the invented patients,
+what each one is for, and their next appointment, drawn from the tester's
+own copy of the data, so a booking made on one call shows on the list for
+the next. Anyone the tester registers appears too, so they can call back
+as an existing patient. A real system would never show this, and the page
+says so.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns

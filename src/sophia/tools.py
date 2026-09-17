@@ -98,6 +98,8 @@ def _normalise_postcode(value: str) -> str:
 def _format_postcode(compact: str) -> str:
     """WA11QN becomes WA1 1QN: the inward part is always the last three characters."""
     compact = compact.upper()
+    if not _UK_POSTCODE.match(compact):
+        return compact  # a made up demo postcode, kept as said
     return f"{compact[:-3]} {compact[-3:]}"
 
 
@@ -171,6 +173,9 @@ _PLACEHOLDERS = {"", "unknown", "none", "n/a", "na", "not provided", "not given"
 # A deliberately loose UK postcode shape, checked with spaces removed, so
 # "W A 1 2 N F" from speech to text still passes.
 _UK_POSTCODE = re.compile(r"^[A-Z]{1,2}\d[A-Z\d]?\d[A-Z]{2}$")
+
+# What counts as a postcode for a new patient when demo details are relaxed.
+_DEMO_POSTCODE = re.compile(r"^[A-Z0-9]{2,8}$")
 
 # How alike a spoken name must be to the record once date of birth and
 # postcode already match exactly. Speech to text heard "Hollis" as
@@ -304,11 +309,18 @@ _MAXIMUM_PLAUSIBLE_AGE = 120
 _MAX_REGISTRATIONS_PER_CALL = 2
 
 
-def _normalise_phone(value: str) -> str | None:
-    """A UK number as eleven digits starting with 0, or None if it is not one."""
+def _normalise_phone(value: str, relaxed: bool = False) -> str | None:
+    """
+    A UK number as eleven digits starting with 0, or None if it is not one.
+
+    Relaxed, for demo testers giving made up numbers, any six to fifteen
+    digits will do.
+    """
     digits = re.sub(r"\D", "", value or "")
     if digits.startswith("44") and len(digits) == 12:
         digits = "0" + digits[2:]
+    if relaxed:
+        return digits if 6 <= len(digits) <= 15 else None
     return digits if _UK_PHONE.match(digits) else None
 
 
@@ -336,7 +348,8 @@ def _spoken_digits(utterances: list[str]) -> str:
 
 def _phone_was_said(phone: str, utterances: list[str]) -> bool:
     """True if the caller said this number, with or without the +44 or leading 0."""
-    return phone[1:] in _spoken_digits(utterances)
+    core = phone[1:] if phone.startswith("0") else phone
+    return core in _spoken_digits(utterances)
 
 
 def _letters(text: str) -> str:
@@ -707,15 +720,16 @@ class SophiaTools:
             return {"registered": False, "reason": "date_not_understood",
                     "say": "Sorry, I did not catch that date of birth. Could you give it to me again, starting with the day?"}
 
+        relaxed = config.DEMO_RELAXED_DETAILS
         spoken_postcode = _normalise_postcode(postcode).upper()
-        if not _UK_POSTCODE.match(spoken_postcode):
+        if not (_DEMO_POSTCODE if relaxed else _UK_POSTCODE).match(spoken_postcode):
             return {"registered": False, "reason": "postcode_not_understood",
-                    "say": "Sorry, I did not catch that as a UK postcode. Could you say it again, letter by letter?"}
+                    "say": "Sorry, I did not catch that postcode. Could you say it again, letter by letter?"}
 
-        normalised_phone = _normalise_phone(phone)
+        normalised_phone = _normalise_phone(phone, relaxed=relaxed)
         if normalised_phone is None:
             return {"registered": False, "reason": "phone_not_understood",
-                    "say": "Sorry, I did not catch that as a UK phone number. Could you say it again, digit by digit?"}
+                    "say": "Sorry, I did not catch that phone number. Could you say it again, digit by digit?"}
 
         if self.caller_heard is not None:
             unsaid = [

@@ -155,3 +155,13 @@ def test_the_call_list_comes_from_the_testers_own_data(tmp_path):
     calls = client.get(f"/api/reminders?session={ALICE}").json()["calls"]
     assert calls, "the seeded call list should not be empty"
     assert sessions.valid_session_id(ALICE)
+
+
+def test_the_demo_patient_list_comes_from_the_testers_own_data(tmp_path):
+    client, store = client_with_store(tmp_path)
+    change_every_patient(store.database(store.get(ALICE)))
+
+    alice = client.get(f"/api/demo-patients?session={ALICE}").json()["patients"]
+    bob = client.get(f"/api/demo-patients?session={BOB}").json()["patients"]
+    assert {p["postcode"] for p in alice} == {"ZZ9 9ZZ"}
+    assert "WA1 2NF" in {p["postcode"] for p in bob}

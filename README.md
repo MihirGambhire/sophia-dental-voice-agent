@@ -70,6 +70,15 @@ swelling with difficulty breathing, get an immediate instruction to ring
 offered today's urgent appointments. She never diagnoses, and a reply
 containing a medicine dose is replaced before the caller hears it.
 
+**A receptionist's order.** Every call follows the same steps: anything
+urgent first, with 999 advice from fixed rules before the model sees a
+word; then whether the caller has been a patient before; then either
+verification or new patient registration; then booking, changes or
+questions. General questions like opening hours need no details at any
+point. The step a call has reached is worked out in code from what has
+actually happened and given to the model every turn, because testers found
+calls wandering when the order lived only in the prompt.
+
 **Identity before information.** Full name, date of birth and postcode are
 confirmed before anything is revealed or changed. A mismatch reveals
 nothing, including which detail was wrong. The postcode must be one the
@@ -194,7 +203,7 @@ Unit tests prove the loop, the tools and the guard rails. They cannot
 prove what the real model does with a real caller, which is where nearly
 every serious bug in this project was found. So there are two layers.
 
-**539 unit tests**, run with no API key and no network:
+**552 unit tests**, run with no API key and no network:
 
 ```bash
 python -m pytest -q
@@ -311,6 +320,13 @@ transcript, kept by a random id in their browser, so people can test at
 the same time without taking each other's slots. **Reset my demo data** on
 the page puts theirs back as it started.
 
+The page lists the invented patients to call as, with what each one is for
+and their next appointment, plus anyone the tester registered, so every
+existing patient flow can be tried. New patients may give made up
+postcodes and phone numbers while `SOPHIA_DEMO_DETAILS` is on, which it is
+by default; they must still be details the caller actually said, and
+existing patients are always checked against their record.
+
 [`docs/TESTING.md`](docs/TESTING.md) is a guide for testers: which fake
 patient to use for each flow, what to say, and what a correct answer is.
 
@@ -370,10 +386,11 @@ src/sophia/
   outbound.py       Reminder calls, and what may be known before verification
   voice_app.py      The voice pipeline, turn taking and the web server
   sessions.py       A private copy of the demo data per tester
+  demo.py           The invented patients a tester can call as
   web_audio.py      The wire format for call audio
 evals/              The scenario suite: framework and scripted calls
 scripts/            init_db, chat, check_setup, list_models, run_evals
-tests/              539 unit tests
+tests/              552 unit tests
 web/                The call page, transcript and outbound call list
 docs/               Engineering log, evaluation results, architecture diagram
 ```
