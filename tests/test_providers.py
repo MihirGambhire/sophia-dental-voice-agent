@@ -547,3 +547,21 @@ def test_the_gemini_adapter_does_not_retry_a_daily_quota(monkeypatch):
     with pytest.raises(errors.ClientError):
         completions._generate_with_retry(model="m", contents=[], config=None)
     assert len(attempts) == 1
+
+
+def test_calls_share_the_sdk_client_but_not_the_conversation():
+    """A new SDK client per call cost 2.2 seconds before every greeting."""
+    first = providers.GeminiClient("test-key-shared")
+    second = providers.GeminiClient("test-key-shared")
+    assert first._client is second._client
+    assert first.chat.completions is not second.chat.completions
+
+
+def test_a_reply_in_two_parts_is_joined_with_a_space_and_thoughts_are_dropped():
+    response = fake_gemini_response([
+        SimpleNamespace(text="Let me reason about this.", thought=True, function_call=None),
+        SimpleNamespace(text="Could you confirm your postcode?", thought=False, function_call=None),
+        SimpleNamespace(text="Margaret, may I have it please?", thought=None, function_call=None),
+    ])
+    message = completions()._to_openai_shape(response).choices[0].message
+    assert message.content == "Could you confirm your postcode? Margaret, may I have it please?"

@@ -317,8 +317,9 @@ class _GeminiCompletions:
         if candidates:
             content = getattr(candidates[0], "content", None)
             for part in (getattr(content, "parts", None) or []):
-                if getattr(part, "text", None):
-                    text_parts.append(part.text)
+                # Thought summaries are the model reasoning, not a reply.
+                if getattr(part, "text", None) and not getattr(part, "thought", False):
+                    text_parts.append(part.text.strip())
 
                 call = getattr(part, "function_call", None)
                 if call is not None and getattr(call, "name", None):
@@ -347,7 +348,9 @@ class _GeminiCompletions:
             choices=[
                 _Choice(
                     message=_Message(
-                        content="".join(text_parts) or None,
+                        # A space, not nothing: a reply in two parts was once
+                        # spoken as "your postcode?Margaret, may I have...".
+                        content=" ".join(part for part in text_parts if part) or None,
                         tool_calls=tool_calls or None,
                     )
                 )
@@ -367,8 +370,25 @@ class GeminiClient:
                 "Run: pip install -r requirements.txt"
             ) from missing
 
-        self._client = genai.Client(api_key=api_key)
+        # The SDK client is shared across calls; the conversation state in
+        # _GeminiCompletions is not. Building a new SDK client loads the
+        # system's certificates three times, which took 2.2 seconds on the
+        # development laptop, before Sophia could say hello on every call.
+        self._client = _shared_genai_client(api_key)
         self.chat = SimpleNamespace(completions=_GeminiCompletions(self._client))
+
+
+_GENAI_CLIENTS: dict[str, object] = {}
+_GENAI_LOCK = threading.Lock()
+
+
+def _shared_genai_client(api_key: str):
+    from google import genai
+
+    with _GENAI_LOCK:
+        if api_key not in _GENAI_CLIENTS:
+            _GENAI_CLIENTS[api_key] = genai.Client(api_key=api_key)
+        return _GENAI_CLIENTS[api_key]
 
 
 # ---------------------------------------------------------------------------

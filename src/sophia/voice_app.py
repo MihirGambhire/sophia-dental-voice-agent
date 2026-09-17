@@ -47,14 +47,17 @@ from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
     EndFrame,
+    ErrorFrame,
     Frame,
     InterimTranscriptionFrame,
+    ManuallySwitchServiceFrame,
     TranscriptionFrame,
     TTSSpeakFrame,
     VADUserStartedSpeakingFrame,
     VADUserStoppedSpeakingFrame,
 )
 from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.service_switcher import ServiceSwitcher, ServiceSwitcherStrategyManual
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.audio.vad_processor import VADProcessor
@@ -67,7 +70,7 @@ from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketTransport,
 )
 
-from . import config, db, demo, outbound, prompts, providers, sessions, web_audio
+from . import clock, config, db, demo, outbound, prompts, providers, sessions, web_audio
 from .agent_text import SophiaAgent
 
 
@@ -112,6 +115,31 @@ INTERRUPT_WORDS = frozenset(
 )
 
 
+# Sophia's voice, when Cartesia's free credits run out.
+#
+# The free tier's 20,000 monthly credits went in one morning of samples and
+# testing, and from then every call was silent: Cartesia answered each
+# request with HTTP 402. Now the first out of credit error switches the call
+# to Deepgram's voice and repeats what failed, and later calls start on
+# Deepgram until this long has passed.
+VOICE_OUT_OF_CREDIT_REST_SECS = 6 * 3600
+_voice_out_of_credit_until = 0.0
+
+
+def _is_out_of_voice_credit(error) -> bool:
+    text = str(error).lower()
+    return "402" in text or "quota_exceeded" in text or "insufficient credits" in text
+
+
+def cartesia_available() -> bool:
+    return config.SPEECH.uses_cartesia and time.monotonic() >= _voice_out_of_credit_until
+
+
+def _mark_cartesia_out_of_credit() -> None:
+    global _voice_out_of_credit_until
+    _voice_out_of_credit_until = time.monotonic() + VOICE_OUT_OF_CREDIT_REST_SECS
+
+
 def _words(text: str) -> list[str]:
     return re.findall(r"[a-z0-9']+", (text or "").lower())
 
@@ -131,11 +159,15 @@ class SophiaVoiceProcessor(FrameProcessor):
         agent: SophiaAgent,
         on_event: Callable[[dict], None] | None = None,
         turn_end_silence: float = TURN_END_SILENCE_SECS,
+        backup_voice: FrameProcessor | None = None,
     ):
         super().__init__()
         self.agent = agent
         self.on_event = on_event or (lambda event: None)
         self.turn_end_silence = turn_end_silence
+        # The voice to switch to if the main one runs out of credit.
+        self.backup_voice = backup_voice
+        self._on_backup_voice = False
 
         self._pending: list[str] = []
         self._caller_speaking = False
@@ -170,6 +202,15 @@ class SophiaVoiceProcessor(FrameProcessor):
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
+
+        if isinstance(frame, ErrorFrame) and _is_out_of_voice_credit(frame.error):
+            # Only an error about a particular sentence means that sentence
+            # went unheard. A connection refused at the start of the call
+            # comes before anything was said, and repeating then made the
+            # greeting play twice.
+            await self._switch_to_backup_voice(repeat="context_id" in str(frame.error))
+            await self.push_frame(frame, direction)
+            return
 
         if isinstance(frame, BotStartedSpeakingFrame):
             self._bot_speaking = True
@@ -213,6 +254,18 @@ class SophiaVoiceProcessor(FrameProcessor):
                 return
 
         await self.push_frame(frame, direction)
+
+    async def _switch_to_backup_voice(self, repeat: bool = True) -> None:
+        """The main voice is out of credit: carry on in the backup voice, once."""
+        _mark_cartesia_out_of_credit()
+        if self.backup_voice is None or self._on_backup_voice:
+            return
+        self._on_backup_voice = True
+        logger.warning("Main voice is out of credit; switching this call to the backup voice")
+        await self.push_frame(ManuallySwitchServiceFrame(service=self.backup_voice))
+        # A sentence that failed was never heard, so it is said again.
+        if repeat and self._bot_text:
+            await self.push_frame(TTSSpeakFrame(self._bot_text))
 
     async def _typed(self, text: str) -> None:
         """
@@ -367,7 +420,7 @@ def build_tts():
     Falling back rather than failing, so a missing Cartesia key or voice id
     leaves the demo working on the old voice instead of silent.
     """
-    if config.SPEECH.uses_cartesia:
+    if cartesia_available():
         from pipecat.services.cartesia.tts import CartesiaTTSService, GenerationConfig
 
         speech = config.SPEECH
@@ -385,8 +438,14 @@ def build_tts():
                 generation_config=style if (style.speed or style.emotion) else None,
             ),
         )
-    if config.SPEECH.tts_provider == "cartesia":
+    if config.SPEECH.uses_cartesia:
+        logger.warning("Cartesia ran out of credit recently; using Deepgram's voice")
+    elif config.SPEECH.tts_provider == "cartesia":
         logger.warning("TTS_PROVIDER is cartesia but the key or voice id is missing; using Deepgram")
+    return _deepgram_tts()
+
+
+def _deepgram_tts():
     return DeepgramTTSService(
         api_key=config.SPEECH.deepgram_api_key,
         settings=DeepgramTTSSettings(voice=config.SPEECH.tts_voice),
@@ -437,8 +496,14 @@ def build_pipeline(
     )
 
     tts = build_tts()
+    backup_voice = None
+    if cartesia_available():
+        # Both voices sit behind a switch, so a call whose main voice runs
+        # out of credit can carry on in the other one.
+        backup_voice = _deepgram_tts()
+        tts = ServiceSwitcher(services=[tts, backup_voice], strategy_type=ServiceSwitcherStrategyManual)
 
-    sophia = SophiaVoiceProcessor(agent, on_event=on_event)
+    sophia = SophiaVoiceProcessor(agent, on_event=on_event, backup_voice=backup_voice)
 
     pipeline = Pipeline(
         [
@@ -555,10 +620,28 @@ def _aiortc_ice_servers() -> list:
     return servers
 
 
+def _practice_clock(now=None) -> dict:
+    """The practice's local time and whether it is open, as the page shows it."""
+    now = now or clock.now()
+    if clock.is_within_opening_hours(now):
+        status = "open"
+    elif clock.is_open_day(now.date()) and now.strftime("%H:%M") < config.OPENING_TIME:
+        status = f"closed, opens at {config.OPENING_TIME}"
+    elif clock.is_open_day(now.date()) and config.LUNCH_START <= now.strftime("%H:%M") < config.LUNCH_END:
+        status = f"closed for lunch until {config.LUNCH_END}"
+    else:
+        status = "closed"
+    return {"practice_time": now.strftime("%H:%M"), "practice_status": status}
+
+
 def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.sessions.clear_leftovers()
+        # Build the shared model client now, so the first caller after a
+        # restart is not the one kept waiting while it loads certificates.
+        if config.LLM.gemini_api_key:
+            await asyncio.to_thread(providers._shared_genai_client, config.LLM.gemini_api_key)
         yield
 
     app = FastAPI(title="Sophia", lifespan=lifespan)
@@ -586,6 +669,10 @@ def create_app() -> FastAPI:
             "voice": config.SPEECH.voice_label,
             "speech_configured": bool(config.SPEECH.deepgram_api_key),
             "turn_configured": config.turn_configured(),
+            # Testers in India called at 12:20, found urgent appointments
+            # "not released yet", and took it for a bug: it was 7:50am in
+            # Warrington. The page shows the practice's own clock.
+            **_practice_clock(),
         }
 
     @app.get("/api/ice")

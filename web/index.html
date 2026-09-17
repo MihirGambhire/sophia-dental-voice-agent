@@ -66,6 +66,9 @@
   }
   .brand-name { font-weight: 600; font-size: 16px; letter-spacing: -0.01em; }
   .brand-sub { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .clock { margin-left: auto; font-size: 13px; color: var(--muted); white-space: nowrap; }
+  .clock b { font-family: var(--mono); font-weight: 500; color: var(--text); }
+  @media (max-width: 640px) { .clock { display: none; } }
   .badge {
     flex: none; font-size: 12.5px; color: var(--urgent);
     border: 1px solid rgba(233, 180, 76, 0.35); background: var(--urgent-soft);
@@ -264,6 +267,7 @@
         <div class="brand-sub">AI receptionist for Museum Street Dental Practice, Warrington</div>
       </div>
     </div>
+    <span class="clock" id="practice-clock" title="The practice's own time in Warrington. Opening hours and the 8am urgent release follow this clock."></span>
     <span class="badge" title="Not affiliated with, endorsed by, or connected to Museum Street Dental Practice. All patient records are invented.">Unofficial demo</span>
   </header>
 
@@ -438,7 +442,16 @@ function selectTab(index) {
 tabs.forEach(([tab], i) => { tab.onclick = () => selectTab(i); });
 try { const saved = Number(localStorage.getItem('sophia-tab')); if (saved > 0 && saved < tabs.length) selectTab(saved); } catch (e) {}
 
+function showPracticeClock(info) {
+  const box = document.getElementById('practice-clock');
+  if (!info.practice_time) return;
+  box.innerHTML = '';
+  box.append('UK time ', el('b', null, info.practice_time), ', practice ' + info.practice_status);
+}
+setInterval(() => fetch('/api/health').then(r => r.json()).then(showPracticeClock).catch(() => {}), 60000);
+
 fetch('/api/health').then(r => r.json()).then(info => {
+  showPracticeClock(info);
   setupEl.innerHTML = '';
   for (const [label, value] of [['Model', info.model], ['Voice', info.voice]]) {
     const item = el('span', null, label + ' ');

@@ -1165,6 +1165,50 @@ to confirm their tests fail without them.
 
 ---
 
+### 38. "It's laggy, I think it's Render": three causes, none of them Render
+
+**Symptom.** A tester on the new hosted link found conversation timing
+laggy and not smooth, and suspected the host.
+
+**Measured before blaming anything.** The latency script failed on the
+laptop server as well as Render, so it was not the host. A trace of a call
+found no audio arriving at all, and the server log said why: Cartesia
+answered every request with HTTP 402, a request needing 149 credits with
+-1112 left. The free tier's 20,000 monthly credits, about 27 minutes of
+speech, had gone in one morning of voice samples, test calls and a long
+tester call. Every call since had been silent.
+
+**Cause two, found while timing the fix.** Creating the agent took 2.2 to
+3.8 seconds on every call, before Sophia could say hello. A profile put
+all of it in `genai.Client()`, which loads the system's certificates
+three times. The SDK client is now built once, when the server starts,
+and shared; each call keeps its own conversation state. Agent creation
+went to under a hundredth of a second.
+
+**Cause three, the model.** Render's main model was still out of daily
+quota during the tester's call, so the backup model answered, which is
+slower, and it produced two replies joined without a space and a spoken
+"(Waiting for response)". Text parts are now joined with a space, thought
+parts are skipped, and bracketed stage directions are removed before
+anything is spoken.
+
+**The voice fix.** Both voices now sit behind a switch in each call. The
+first out of credit error switches the call to Deepgram's voice, and later
+calls start on Deepgram for six hours. A failed sentence is repeated, but
+a connection refused at the start of a call is not: the first version
+repeated anyway, and the greeting played twice, which a trace of the audio
+length showed (17.9 seconds for a 9 second greeting). Checked live, with
+Cartesia genuinely out of credit: calls speak again, once.
+
+**Not a bug, but it looked like one.** "Urgent appointments are not
+released yet" at 12:20 in India was correct: it was 7:50am in Warrington.
+The page now shows the practice's UK time and whether it is open.
+
+**Lesson.** "It is the host" was the natural guess and was wrong three
+ways. The script that measures latency found the real fault by failing.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns

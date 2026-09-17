@@ -710,3 +710,80 @@ def test_words_just_spoken_are_answered_with_the_typed_message():
     ]))
 
     assert agent.heard == ["my name is Margaret Hollis"]
+
+
+# ---------------------------------------------------------------------------
+# When the main voice runs out of credit
+# ---------------------------------------------------------------------------
+
+
+def test_running_out_of_voice_credit_switches_to_the_backup_and_repeats_the_line(monkeypatch):
+    """Cartesia's free credits ran out in a morning, and every call went silent."""
+    from pipecat.frames.frames import ErrorFrame, ManuallySwitchServiceFrame
+    from sophia import voice_app
+
+    monkeypatch.setattr(voice_app, "_voice_out_of_credit_until", 0.0)
+    backup = object()
+    processor, pushed, _ = make_processor(FakeAgent())
+    processor.backup_voice = backup
+    processor.set_spoken_text("Hello, you're through to the practice.")
+
+    error = ErrorFrame(error="{'context_id': 'abc', 'error_code': 'quota_exceeded', 'status_code': 402}")
+    asyncio.run(feed(processor, error, FrameDirection.UPSTREAM))
+    asyncio.run(feed(processor, error, FrameDirection.UPSTREAM))
+
+    switches = [f for f, _ in pushed if isinstance(f, ManuallySwitchServiceFrame)]
+    repeats = [f.text for f, _ in pushed if isinstance(f, TTSSpeakFrame)]
+    assert len(switches) == 1 and switches[0].service is backup
+    assert repeats == ["Hello, you're through to the practice."]
+    assert not voice_app.cartesia_available()
+
+
+def test_other_errors_do_not_switch_voices(monkeypatch):
+    from pipecat.frames.frames import ErrorFrame, ManuallySwitchServiceFrame
+    from sophia import voice_app
+
+    monkeypatch.setattr(voice_app, "_voice_out_of_credit_until", 0.0)
+    processor, pushed, _ = make_processor(FakeAgent())
+    processor.backup_voice = object()
+    asyncio.run(feed(processor, ErrorFrame(error="Deepgram connection reset"), FrameDirection.UPSTREAM))
+    assert not any(isinstance(f, ManuallySwitchServiceFrame) for f, _ in pushed)
+
+
+def test_later_calls_start_on_the_backup_voice_while_credit_is_out(monkeypatch):
+    from pipecat.services.deepgram.tts import DeepgramTTSService
+    from sophia import voice_app
+
+    monkeypatch.setattr(voice_app.config, "SPEECH",
+                        _speech(tts_provider="cartesia", cartesia_api_key="ck", cartesia_voice_id="voice-1"))
+    monkeypatch.setattr(voice_app, "_voice_out_of_credit_until", float("inf"))
+    assert isinstance(voice_app.build_tts(), DeepgramTTSService)
+
+
+def test_a_refused_connection_at_the_start_switches_without_repeating(monkeypatch):
+    """Nothing had been said yet, and repeating made the greeting play twice."""
+    from pipecat.frames.frames import ErrorFrame, ManuallySwitchServiceFrame
+    from sophia import voice_app
+
+    monkeypatch.setattr(voice_app, "_voice_out_of_credit_until", 0.0)
+    processor, pushed, _ = make_processor(FakeAgent())
+    processor.backup_voice = object()
+    processor.set_spoken_text("Hello, you're through to the practice.")
+
+    error = ErrorFrame(error="Unknown error occurred: server rejected WebSocket connection: HTTP 402")
+    asyncio.run(feed(processor, error, FrameDirection.UPSTREAM))
+
+    assert any(isinstance(f, ManuallySwitchServiceFrame) for f, _ in pushed)
+    assert not any(isinstance(f, TTSSpeakFrame) for f, _ in pushed)
+
+
+@pytest.mark.parametrize(
+    "hour, minute, expected",
+    [(7, 50, "closed, opens at 08:00"), (10, 0, "open"), (13, 30, "closed for lunch until 14:00"), (19, 0, "closed")],
+)
+def test_the_page_shows_the_practice_clock(hour, minute, expected):
+    """Testers in India took "urgent slots not released yet" for a bug at 7:50am UK time."""
+    from sophia import voice_app
+
+    shown = voice_app._practice_clock(clock.combine(date(2026, 9, 21), time(hour, minute)))
+    assert shown == {"practice_time": f"{hour:02d}:{minute:02d}", "practice_status": expected}

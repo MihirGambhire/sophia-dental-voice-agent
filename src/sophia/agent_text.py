@@ -112,7 +112,16 @@ def plain_text(value: str) -> str:
         return value
     for fancy, plain in TEXT_REPLACEMENTS.items():
         value = value.replace(fancy, plain)
-    return value
+    # Stage directions a model sometimes writes, which a voice reads aloud:
+    # a backup model ended a reply with "(Waiting for response)".
+    value = _STAGE_DIRECTIONS.sub("", value)
+    return re.sub(r"[ 	]{2,}", " ", value).strip()
+
+
+_STAGE_DIRECTIONS = re.compile(
+    r"\s*[\(\[](?:waiting|pause|pauses|silence|laughs?|sighs?|end of (?:call|response))[^\)\]]*[\)\]]",
+    re.IGNORECASE,
+)
 
 
 @dataclass
