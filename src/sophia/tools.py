@@ -463,6 +463,8 @@ class SophiaTools:
         self.offered_slots: list[dict] = []
         self.offered_urgent: list[dict] = []
         self.bookings_made: list[dict] = []
+        # The message taken on this call, if any. Later additions join it.
+        self.message_id: int | None = None
         # True once the caller has said they are new to the practice, False
         # once they have said they have been before, None until either.
         # Set by the agent from the caller's own words.
@@ -1601,13 +1603,49 @@ class SophiaTools:
         """
         if not (caller_name or "").strip():
             raise ToolError("A message needs a name to go with it.")
+        first = caller_name.split()[0]
+
+        # A tester's message was taken with no number, twice, and only when
+        # he asked "how will they contact me?" was he asked for one. A
+        # message nobody can answer is not a message. The number must be one
+        # the caller said, or the one on a verified patient's record.
+        number = None
+        if (callback_number or "").strip().casefold() not in _PLACEHOLDERS:
+            number = _normalise_phone(callback_number, relaxed=config.DEMO_RELAXED_DETAILS)
+            if number is None:
+                return {"taken": False, "reason": "phone_not_understood",
+                        "say": "Sorry, I did not catch that number. Could you say it again, digit by digit?"}
+            if self.caller_heard is not None and not _phone_was_said(number, self.caller_heard):
+                number = None
+        if number is None and self.message_id is not None:
+            number = self.conn.execute(
+                "SELECT callback_number FROM messages WHERE id = ?", (self.message_id,)
+            ).fetchone()["callback_number"]
+        if number is None and self.verified_patient_id is not None:
+            number = self._patient_row(self.verified_patient_id)["phone"] or None
+        if number is None:
+            return {"taken": False, "reason": "missing_details", "missing": ["phone number"],
+                    "say": "Could I take a phone number for the team to call you back on?"}
+
+        # One message per call. Something added later joins the first,
+        # rather than a second message saying half the same thing.
+        if self.message_id is not None:
+            row = self.conn.execute("SELECT reason, detail FROM messages WHERE id = ?", (self.message_id,)).fetchone()
+            extra = "; ".join(part for part in (reason, detail) if part)
+            self.conn.execute(
+                "UPDATE messages SET callback_number = ?, detail = ? WHERE id = ?",
+                (number, "; ".join(part for part in (row["detail"], extra) if part), self.message_id),
+            )
+            self.conn.commit()
+            return {"taken": True, "message_id": self.message_id, "added_to_earlier_message": True,
+                    "say": f"I have added that to your message for the team, {first}."}
 
         cursor = self.conn.execute(
             "INSERT INTO messages (caller_name, callback_number, patient_id, reason, detail, created_at, status) "
             "VALUES (?, ?, ?, ?, ?, ?, 'open')",
             (
                 caller_name.strip(),
-                (callback_number or "").strip() or None,
+                number,
                 self.verified_patient_id,
                 reason,
                 detail,
@@ -1615,12 +1653,14 @@ class SophiaTools:
             ),
         )
         self.conn.commit()
+        self.message_id = cursor.lastrowid
 
         return {
+            "taken": True,
             "message_id": cursor.lastrowid,
             "say": (
-                f"I have taken that down for the team, {caller_name.split()[0]}. "
-                "They will get back to you."
+                f"I have taken that down for the team, {first}, and they will call you back "
+                "on the number you gave me."
             ),
         }
 

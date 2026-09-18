@@ -783,6 +783,22 @@ def test_a_call_is_over_only_when_both_sides_have_finished(said, reply, expected
     assert call_is_over(said, reply) is expected
 
 
+@pytest.mark.parametrize(
+    "said, reply, last_reply, expected",
+    [
+        ("no", "Thank you for calling, Mihir. Goodbye.", "Is there anything else I can help you with today, Mihir?", True),
+        ("nope.", "Take care, bye now.", "Anything else I can help with?", True),
+        ("no", "Thank you for calling, Mihir. Goodbye.", "Could you tell me again what you'd like to know?", True),
+        ("no", "No problem, have a lovely day.", "Would you like to book it?", False),
+    ],
+)
+def test_a_bare_no_ends_the_call_when_it_answers_anything_else_or_gets_a_goodbye(said, reply, last_reply, expected):
+    """A tester answered with "no", heard goodbye, and the line stayed open."""
+    from sophia.agent_text import call_is_over
+
+    assert call_is_over(said, reply, last_reply) is expected
+
+
 def test_the_turn_record_says_when_the_call_is_over(conn):
     agent = agent_with(conn, [text_response("Thank you for calling. Goodbye.")])
     assert agent.say("No, that's everything, thanks").ends_call is True
@@ -827,3 +843,22 @@ def test_a_reply_does_not_start_with_stray_punctuation():
     from sophia.agent_text import plain_text
 
     assert plain_text(". Our reception staff answer the phone.") == "Our reception staff answer the phone."
+
+
+def test_an_invented_call_back_habit_must_be_looked_up():
+    from sophia.agent_text import _CLAIMS_PRACTICE_FACT
+
+    assert _CLAIMS_PRACTICE_FACT.search("they will usually try calling you again later")
+    assert not _CLAIMS_PRACTICE_FACT.search("I have taken that down for the team, and they will call you back.")
+
+
+def test_a_guessed_call_back_habit_is_replaced_with_what_is_known():
+    """"They will usually try calling you back again later", said straight after a lookup that said otherwise."""
+    from sophia.agent_text import CALL_BACK_ANSWER, replace_call_back_guess
+
+    reply = ("If they can't reach you, they will usually try calling you back again later. "
+             "Is there anything else I can help with?")
+    fixed = replace_call_back_guess(reply)
+    assert "usually" not in fixed
+    assert CALL_BACK_ANSWER in fixed and fixed.endswith("Is there anything else I can help with?")
+    assert replace_call_back_guess("I have taken that down, and they will call you back.") is None

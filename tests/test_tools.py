@@ -1132,3 +1132,45 @@ def test_a_first_name_alone_is_asked_to_be_completed_before_any_lookup(conn):
     assert result["say"] == "Could I take your surname as well, Margaret?"
     # And the same for a name nobody has: the answer reveals nothing.
     assert session.verify_patient("Zelda", "1958-03-12", "WA1 2NF")["reason"] == "missing_details"
+
+
+# ---------------------------------------------------------------------------
+# Messages need a way back to the caller
+# ---------------------------------------------------------------------------
+
+
+def _message_session(conn, said):
+    session = at(conn, a_weekday_at(10))
+    session.caller_heard = list(said)
+    return session
+
+
+def test_a_message_without_a_number_asks_for_one_first(conn):
+    """A tester's message was taken twice with no number, then he asked how they would reach him."""
+    session = _message_session(conn, ["Mihir Gambhire", "are treatments painful?"])
+    result = session.take_message("Mihir Gambhire", "Question about pain during treatment")
+    assert result["taken"] is False
+    assert result["say"] == "Could I take a phone number for the team to call you back on?"
+    assert conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+
+
+def test_a_number_the_caller_never_said_is_not_used(conn):
+    session = _message_session(conn, ["Mihir Gambhire", "are treatments painful?"])
+    assert session.take_message("Mihir Gambhire", "Pain question", "07700 900999")["taken"] is False
+
+
+def test_later_additions_join_the_first_message(conn):
+    session = _message_session(conn, ["Mihir Gambhire", "call me on 07700 900123"])
+    first = session.take_message("Mihir Gambhire", "Pain question", "07700 900123")
+    second = session.take_message("Mihir Gambhire", "Worried about comfort")
+    assert first["taken"] and second["added_to_earlier_message"]
+    rows = conn.execute("SELECT callback_number, detail FROM messages").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["callback_number"] == "07700900123" and "Worried about comfort" in rows[0]["detail"]
+
+
+def test_a_verified_patient_is_called_back_on_the_number_on_record(conn):
+    row = conn.execute("SELECT * FROM patients WHERE code = 'okafor'").fetchone()
+    session = at(conn, a_weekday_at(10))
+    session.verify_patient(row["full_name"], row["dob"], row["postcode"])
+    assert session.take_message(row["full_name"], "Question for the dentist")["taken"] is True

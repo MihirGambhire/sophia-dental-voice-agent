@@ -101,6 +101,8 @@ _CLAIMS_PRACTICE_FACT = re.compile(
     # nothing behind it, to a caller asking whether a human would answer.
     r"|\breal person (?:from|on|in|at|will|would)\b"
     r"|\b(?:someone|a member of (?:the |our )?team|our (?:reception|team)) (?:will|would) (?:answer|pick up)\b"
+    # "They will usually try calling you again later", a habit nobody wrote down.
+    r"|\b(?:they|the team|we) (?:will |would )?(?:usually|normally|typically|always) (?:try|call|ring|give)\b"
 )
 _CHECKS_PRACTICE_FACT = {"search_practice_info", "get_fee", "recommend_appointment_type"}
 
@@ -291,9 +293,55 @@ _ASKS_FOR_DETAIL = {
 }
 
 
-def call_is_over(said: str, reply: str) -> bool:
+# A bare "no" only means "I'm done" as the answer to "anything else?". A
+# tester answered that with "no", heard goodbye, and the line stayed open.
+_ASKED_ANYTHING_ELSE = re.compile(r"\banything else\b|\bhelp (?:you )?with anything\b", re.IGNORECASE)
+_SHORT_DONE = re.compile(r"^\W*(?:no|nope|nah|not really|no thanks?|nothing|that'?s it)\W*$", re.IGNORECASE)
+
+
+# What the team does when a call back goes unanswered is written nowhere, and
+# a tester was told "they will usually try calling you back again later"
+# twice, once straight after the lookup that said Sophia cannot know. A
+# lookup is not enough here, so the sentence itself is replaced.
+_CALL_BACK_GUESS = re.compile(
+    r"[^.?!]*\b(?:they|the team|we)\b[^.?!]{0,30}\b(?:usually|normally|typically|always|generally)\b"
+    r"[^.?!]{0,40}\b(?:try|call|ring|phone)[^.?!]*[.?!]?",
+    re.IGNORECASE,
+)
+CALL_BACK_ANSWER = (
+    "I can't say exactly when they will call or what happens if they miss you, "
+    "but you can always ring the practice on 01925 630221 during opening hours."
+)
+
+
+def replace_call_back_guess(reply: str) -> str | None:
+    """The reply with a guessed call back habit replaced, or None if there is none."""
+    if not _CALL_BACK_GUESS.search(reply or ""):
+        return None
+    # Sentence by sentence: the first guess becomes the known answer, any
+    # others go. The answer itself would match the pattern, so it is added
+    # after matching rather than matched against.
+    sentences = re.findall(r"[^.?!]+[.?!]*", reply)
+    kept, answered = [], False
+    for sentence in sentences:
+        if _CALL_BACK_GUESS.search(sentence):
+            if not answered:
+                kept.append(CALL_BACK_ANSWER)
+                answered = True
+            continue
+        kept.append(sentence.strip())
+    return " ".join(part for part in kept if part)
+
+
+def call_is_over(said: str, reply: str, last_reply: str = "") -> bool:
     """True when the caller is done and Sophia has said goodbye."""
-    return bool(_CALLER_DONE.search(said or "") and _SOPHIA_FAREWELL.search(reply or ""))
+    # A short "no" also counts when Sophia answers it with an outright
+    # goodbye: she has judged the call over, and the line should agree.
+    done = bool(_CALLER_DONE.search(said or "")) or bool(
+        _SHORT_DONE.match(said or "")
+        and (_ASKED_ANYTHING_ELSE.search(last_reply or "") or re.search(r"\bgoodbye\b", reply or "", re.IGNORECASE))
+    )
+    return done and bool(_SOPHIA_FAREWELL.search(reply or ""))
 
 
 def said_new_or_existing(said: str, last_reply: str) -> bool | None:
@@ -710,15 +758,18 @@ class SophiaAgent:
 
         if self._unchecked_claim(record):
             # Checked once and still not looked up: better silence on the
-            # point than a confident guess.
+            # point than a confident guess. A guessed call back habit has a
+            # known answer, which beats asking the caller to repeat themselves.
             record.corrected_claim = record.reply
-            record.reply = (
+            record.reply = replace_call_back_guess(record.reply) or (
                 "I don't want to tell you the wrong thing there, so let me check. "
                 "Could you tell me again exactly what you'd like to know?"
             )
             self.messages[-1] = {"role": "assistant", "content": record.reply}
 
         corrected = self._correct_false_claims(record.reply)
+        if corrected is None:
+            corrected = replace_call_back_guess(record.reply)
         if corrected is not None:
             record.corrected_claim = record.reply
             record.reply = corrected
@@ -732,7 +783,7 @@ class SophiaAgent:
             record.reply = enforced
             self.messages[-1] = {"role": "assistant", "content": enforced}
 
-        record.ends_call = call_is_over(text, record.reply)
+        record.ends_call = call_is_over(text, record.reply, last_reply)
         # A fuller name replaces a first name, never the other way round.
         if name and len(name.split()) >= len((self.tools.caller_name or "").split()):
             self.tools.caller_name = name

@@ -1404,6 +1404,30 @@ after one began ". Our reception staff".
 
 ---
 
+### 45. A message with no number, and a goodbye that did not hang up
+
+**Symptom.** A tester asked general questions, accepted a message for the
+team, and heard "I have taken that down" twice, with no number, until he
+asked "how will they contact me?". Asked what happens if he misses their
+call, Sophia said "they will usually try calling you again later", which is
+written nowhere. He answered "anything else?" with "no", she said goodbye,
+and the line stayed open. His registered patient was also gone from the
+list: registered on Render before the browser kept a copy, then wiped by
+the next deploy.
+
+**Fix.** `take_message` needs a number the caller said, or the one on a
+verified patient's record, and asks for it before saving anything. A second
+message on the same call joins the first instead of repeating it. What
+happens with a missed call back is now in the practice information as
+something Sophia cannot know, and a guessed habit ("they usually try
+again") is replaced in code with that answer, even after a lookup, since
+the model said it straight after reading otherwise. A short "no" ends the
+call when it answers "anything else?" or when Sophia answers it with an
+outright goodbye. Replayed: number asked for first, one message, the known
+answer about missed calls, and the call ended on "no".
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns
