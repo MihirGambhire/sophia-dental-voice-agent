@@ -71,7 +71,7 @@ from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketTransport,
 )
 
-from . import clock, config, db, demo, outbound, prompts, providers, sessions, web_audio
+from . import clock, config, dashboard, db, demo, outbound, prompts, providers, sessions, web_audio
 from .agent_text import SophiaAgent
 
 
@@ -197,6 +197,7 @@ class SophiaVoiceProcessor(FrameProcessor):
         # ends once she stops speaking, unless the caller speaks first.
         self._hang_up_after_speaking = False
         self._hang_up_task: asyncio.Task | None = None
+        self.ended_by_sophia = False
 
         self._pending: list[str] = []
         self._caller_speaking = False
@@ -319,6 +320,7 @@ class SophiaVoiceProcessor(FrameProcessor):
         if not self._hang_up_after_speaking:
             return
         logger.info("The caller is done and Sophia said goodbye; ending the call")
+        self.ended_by_sophia = True
         self.on_event({"type": "ended", "text": "Sophia ended the call after saying goodbye."})
         await self.push_frame(EndTaskFrame(), FrameDirection.UPSTREAM)
 
@@ -625,9 +627,32 @@ def build_pipeline(
         sophia.set_spoken_text(agent.greeting)
         await task.queue_frames([TTSSpeakFrame(agent.greeting)])
 
+    started = clock.now()
+
+    def finish_call() -> None:
+        """
+        Keep the call's summary for the practice team page, then close.
+
+        Called when the caller hangs up and again when the pipeline ends,
+        because a call Sophia ends herself may not report a disconnect.
+        Only the first call does anything. A failure here must never stop
+        the call ending.
+        """
+        if getattr(agent, "call_finished", False):
+            return
+        agent.call_finished = True
+        try:
+            ended_by = "Sophia, after saying goodbye" if sophia.ended_by_sophia else "the caller"
+            dashboard.record_call(conn, dashboard.summarise_call(agent, started, clock.now(), ended_by))
+        except Exception:  # noqa: BLE001
+            logger.exception("Could not record the call summary")
+        conn.close()
+
+    agent.finish_call = finish_call
+
     @transport.event_handler("on_client_disconnected")
     async def _hang_up(_transport, _client):
-        conn.close()
+        finish_call()
         await task.queue_frames([EndFrame()])
 
     return task, agent
@@ -803,6 +828,26 @@ def create_app() -> FastAPI:
         finally:
             conn.close()
 
+    @app.get("/api/team")
+    async def team(session: str | None = None):
+        """The Dashboard tab: messages, what Sophia did, call summaries, the week's appointments."""
+        store = app.state.sessions
+        conn = db.connect(store.database(store.get(session)))
+        try:
+            return dashboard.team_view(conn)
+        finally:
+            conn.close()
+
+    @app.post("/api/messages/{message_id}/done")
+    async def message_done(message_id: int, session: str | None = None):
+        """The team has dealt with a message."""
+        store = app.state.sessions
+        conn = db.connect(store.database(store.get(session)))
+        try:
+            return {"done": dashboard.mark_message_done(conn, message_id)}
+        finally:
+            conn.close()
+
     @app.post("/api/restore-registered")
     async def restore_registered(body: dict, session: str | None = None):
         """Put back the patients this tester registered, after a server restart."""
@@ -938,7 +983,10 @@ def create_app() -> FastAPI:
 
         # Unlike the WebRTC offer, this request IS the call, so it is
         # awaited: the handler returns when the caller hangs up.
-        await PipelineRunner(handle_sigint=False).run(task)
+        try:
+            await PipelineRunner(handle_sigint=False).run(task)
+        finally:
+            _agent.finish_call()
 
     web_dir = config.ROOT_DIR / "web"
     if web_dir.exists():

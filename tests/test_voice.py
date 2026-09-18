@@ -432,9 +432,10 @@ def test_the_web_page_exists_and_carries_the_disclaimer():
     from sophia import config
 
     page = (config.ROOT_DIR / "web" / "index.html").read_text(encoding="utf-8")
-    assert "Unofficial concept demo" in page
-    assert "999" in page
-    assert "AI assistant" in page
+    # The footer went at the owner's request; the header badge carries it.
+    assert "Unofficial demo" in page
+    assert "Not affiliated with" in page and "All patient records are invented" in page
+    assert "AI receptionist" in page
 
 
 # ---------------------------------------------------------------------------

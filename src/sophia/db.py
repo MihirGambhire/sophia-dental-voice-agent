@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS appointments (
     booked_via   TEXT DEFAULT 'sophia',
     created_at   TEXT NOT NULL,
     cancelled_at TEXT,
+    cancelled_via TEXT,
     notes        TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_appts_patient ON appointments (patient_id, status);
@@ -133,7 +134,27 @@ CREATE TABLE IF NOT EXISTS messages (
     detail          TEXT,
     created_at      TEXT NOT NULL,
     status          TEXT NOT NULL DEFAULT 'open'
-                    CHECK (status IN ('open', 'actioned'))
+                    CHECK (status IN ('open', 'actioned')),
+    urgency         TEXT NOT NULL DEFAULT 'routine',
+    assigned_to     TEXT NOT NULL DEFAULT 'Reception'
+);
+
+-- One row per call, for the practice team page. Built from what happened
+-- on the call, see dashboard.py, never written by the model.
+CREATE TABLE IF NOT EXISTS calls (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at  TEXT NOT NULL,
+    ended_at    TEXT NOT NULL,
+    caller      TEXT NOT NULL,
+    patient_id  INTEGER REFERENCES patients(id) ON DELETE SET NULL,
+    direction   TEXT NOT NULL DEFAULT 'inbound',
+    asked_about TEXT,
+    outcomes    TEXT,
+    safety      TEXT,
+    turns       INTEGER NOT NULL DEFAULT 0,
+    first_words TEXT,
+    ended_by    TEXT,
+    follow_up   INTEGER NOT NULL DEFAULT 0
 );
 
 -- Outbound call queue, used in phase 2.
@@ -181,7 +202,30 @@ def connect(
     conn = sqlite3.connect(path, check_same_thread=not shared_across_threads)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    _add_missing_columns(conn)
     return conn
+
+
+# Columns added after a database may already exist. A database built before
+# the practice team page lacks them, and taking a message would fail.
+_LATER_COLUMNS = (
+    ("appointments", "cancelled_via", "TEXT"),
+    ("messages", "urgency", "TEXT NOT NULL DEFAULT 'routine'"),
+    ("messages", "assigned_to", "TEXT NOT NULL DEFAULT 'Reception'"),
+    ("calls", "follow_up", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+
+def _add_missing_columns(conn: sqlite3.Connection) -> None:
+    for table, column, declaration in _LATER_COLUMNS:
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if existing and column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+    has_calls = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'calls'").fetchone()
+    has_messages = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'messages'").fetchone()
+    if has_messages and not has_calls:
+        start = SCHEMA.index("CREATE TABLE IF NOT EXISTS calls")
+        conn.executescript(SCHEMA[start:SCHEMA.index(");", start) + 2])
 
 
 def create_schema(conn: sqlite3.Connection) -> None:

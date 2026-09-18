@@ -881,3 +881,17 @@ def test_sophia_saying_goodbye_ends_the_call_on_its_own(reply, expected):
     from sophia.agent_text import call_is_over
 
     assert call_is_over("9307799220", reply) is expected
+
+
+@pytest.mark.parametrize(
+    "spoken, expected",
+    [
+        ("Is the swelling severe—for example, is it affecting your breathing?",
+         "Is the swelling severe, for example, is it affecting your breathing?"),
+        ("We are open 8–6 on weekdays.", "We are open 8 to 6 on weekdays."),
+    ],
+)
+def test_a_dash_is_read_as_a_pause_or_a_range(spoken, expected):
+    from sophia.agent_text import plain_text
+
+    assert plain_text(spoken) == expected

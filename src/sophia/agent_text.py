@@ -119,6 +119,11 @@ def plain_text(value: str) -> str:
     """
     if not value:
         return value
+    # A dash between words is a pause, and read as a hyphen it ran words
+    # together: "is the swelling severe-for example". Between numbers it is
+    # a range.
+    value = re.sub(r"(\d)\s*[–—]\s*(\d)", r"\1 to \2", value)
+    value = re.sub(r"\s*[–—]\s*", ", ", value)
     for fancy, plain in TEXT_REPLACEMENTS.items():
         value = value.replace(fancy, plain)
     # Stage directions a model sometimes writes, which a voice reads aloud:

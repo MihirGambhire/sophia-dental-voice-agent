@@ -78,8 +78,17 @@
   /* Layout */
   .layout { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); }
   @media (min-width: 980px) {
-    .layout { grid-template-columns: minmax(0, 1fr) 390px; align-items: start; }
-    .side { position: sticky; top: 20px; }
+    /*
+      Both columns end together. The call panel stretches to the height of
+      the side column and the transcript takes up the difference, so there
+      is no empty space under the call. The transcript's own content never
+      sets the height (flex basis 0), so a long call scrolls inside it
+      rather than stretching the page.
+    */
+    .layout { grid-template-columns: minmax(0, 1fr) 390px; align-items: stretch; }
+    .call { display: flex; flex-direction: column; }
+    .transcript-wrap { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+    .layout #transcript { flex: 1 1 0; max-height: none; }
   }
 
   .panel {
@@ -240,11 +249,43 @@
   }
   .loading { color: var(--faint); font-size: 13.5px; padding: 8px 2px; }
 
-
-  footer {
-    margin-top: 28px; padding-top: 18px; border-top: 1px solid var(--line-soft);
-    font-size: 12.5px; color: var(--faint); display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  /*
+    Reception desk: one small box, only what needs someone's attention.
+    One line of numbers, at most three one line alerts, one line of the
+    latest thing Sophia did. Anything more belongs somewhere else.
+  */
+  .desk { padding: 14px 16px; }
+  .desk-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .desk-head h2 { margin: 0; font-size: 14px; font-weight: 600; }
+  .desk-live { margin-left: auto; font-size: 11.5px; color: var(--faint); display: inline-flex; align-items: center; gap: 5px; }
+  .desk-live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .desk-nums { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--line-soft); border-radius: var(--radius-control); }
+  .desk-num { padding: 8px 10px; }
+  .desk-num + .desk-num { border-left: 1px solid var(--line-soft); }
+  .desk-num b { display: block; font: 500 18px/1.2 var(--mono); }
+  .desk-num span { display: block; font-size: 12px; line-height: 1.3; color: var(--faint); }
+  .desk-num.alert b { color: var(--urgent); }
+  .desk-alerts { margin-top: 8px; }
+  .desk-alert { display: flex; align-items: center; gap: 10px; padding: 7px 0; font-size: 13px; border-bottom: 1px solid var(--line-soft); }
+  .desk-text { flex: 1; min-width: 0; line-height: 1.35; }
+  .desk-line { display: flex; align-items: baseline; gap: 8px; }
+  .desk-alert:last-child { border-bottom: 0; }
+  .desk-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--faint); }
+  .desk-dot.urgent { background: var(--urgent); }
+  .desk-dot.emergency { background: var(--danger); }
+  .desk-who { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .desk-for { margin-left: auto; font-size: 11.5px; color: var(--faint); white-space: nowrap; }
+  .desk-what { display: block; color: var(--muted); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .desk-tick {
+    width: 24px; height: 24px; flex: none; display: grid; place-items: center; cursor: pointer;
+    border: 1px solid var(--line); border-radius: var(--radius-chip); background: transparent; color: var(--faint);
   }
+  .desk-tick:hover { color: var(--accent); border-color: var(--accent); }
+  .desk-more, .desk-quiet { font-size: 12.5px; color: var(--faint); padding-top: 6px; }
+  .desk-last { margin-top: 8px; font-size: 12.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .desk-last b { color: var(--muted); font-weight: 500; }
+
+
 
   @media (max-width: 640px) {
     .page { padding: 0 14px 32px; }
@@ -314,8 +355,16 @@
 
     <aside class="side">
 
+      <section class="panel desk" aria-labelledby="desk-title">
+        <div class="desk-head">
+          <h2 id="desk-title">Reception desk</h2>
+          <span class="desk-live" title="Updates as Sophia takes messages and books">live</span>
+        </div>
+        <div id="desk"><div class="desk-quiet">Loading...</div></div>
+      </section>
+
       <section class="panel guide" aria-labelledby="guide-title">
-        <h2 id="guide-title">How to test</h2>
+        <h2 id="guide-title">Guide</h2>
         <ol class="steps">
           <li><strong>Start a call</strong> and say what you need, for example a check up or toothache. Somewhere you cannot talk? Type in the box under the transcript and mute your mic: Sophia still answers out loud.</li>
           <li><strong>Say whether it is urgent</strong>, and whether you have been a patient here before.</li>
@@ -349,10 +398,6 @@
     </aside>
   </main>
 
-  <footer>
-    <span>Unofficial concept demo. Not affiliated with Museum Street Dental Practice. All patient records are invented.</span>
-    <span>Sophia is an AI assistant, not a clinician. In an emergency, call 999.</span>
-  </footer>
 </div>
 
 
@@ -534,6 +579,7 @@ async function poll() {
       // rather than after the call.
       const changed = ['register_new_patient', 'book_appointment', 'book_urgent_slot', 'cancel_appointment', 'reschedule_appointment'];
       if (data.events.some(e => (e.tools || []).some(t => changed.includes(t)))) loadDemoPatients();
+      if (data.events.some(e => (e.tools || []).length)) loadDashboard();
     }
   } catch (e) { /* the call matters, the transcript panel does not */ }
   finally { polling = false; }
@@ -733,6 +779,7 @@ function cleanup(message) {
   setState(message || 'Not connected');
   setTimeout(loadReminders, 800);
   setTimeout(loadDemoPatients, 800);
+  setTimeout(loadDashboard, 1200);
   callBtn.disabled = false;
   hangBtn.disabled = true;
   setComposer(false);
@@ -865,6 +912,81 @@ async function loadDemoPatients() {
   }
 }
 
+// Reception desk: only what needs attention. Urgency and who deals with a
+// message are set by rules on the server, not by the model.
+const DESK_SHOWN = 3;
+
+function short(text, words) {
+  const parts = (text || '').split(/\s+/);
+  return parts.length > words ? parts.slice(0, words).join(' ') + '...' : text;
+}
+
+async function loadDashboard() {
+  const box = document.getElementById('desk');
+  let data;
+  try { data = await (await fetch('/api/team?session=' + S)).json(); } catch (e) { return; }
+  box.innerHTML = '';
+
+  const nums = el('div', 'desk-nums');
+  for (const [value, label, alert] of [
+    [data.stats.appointments_today, 'booked today', false],
+    [data.stats.urgent_free_today, 'urgent slots left', false],
+    [data.stats.open_messages + data.stats.follow_ups, 'to call back', data.stats.urgent_messages + data.stats.follow_ups > 0],
+  ]) {
+    const cell = el('div', 'desk-num' + (alert ? ' alert' : ''));
+    cell.append(el('b', null, String(value)), el('span', null, label));
+    nums.appendChild(cell);
+  }
+  box.appendChild(nums);
+
+  // Open messages, most urgent first, then calls that raised a same day
+  // problem and ended with nothing booked. At most three lines.
+  const items = [];
+  for (const m of data.messages.filter(m => m.status === 'open')) {
+    items.push({ level: m.urgency, who: m.caller, what: m.reason, owner: m.assigned_to, id: m.id });
+  }
+  for (const c of data.calls.filter(c => c.follow_up)) {
+    items.push({ level: 'urgent', who: c.caller.replace(/ \(.*\)$/, ''), what: 'Same day problem, nothing booked', owner: 'Duty dentist' });
+  }
+  const rank = { emergency: 0, urgent: 1, routine: 2 };
+  items.sort((a, b) => (rank[a.level] ?? 3) - (rank[b.level] ?? 3));
+
+  const alerts = el('div', 'desk-alerts');
+  if (!items.length) alerts.appendChild(el('div', 'desk-quiet', 'Nothing waiting for the team.'));
+  for (const item of items.slice(0, DESK_SHOWN)) {
+    const row = el('div', 'desk-alert');
+    row.title = `${item.who}: ${item.what}. For ${item.owner}.`;
+    const text = el('div', 'desk-text');
+    const line = el('div', 'desk-line');
+    line.append(el('span', 'desk-who', short(item.who, 2)), el('span', 'desk-for', item.owner));
+    text.append(line, el('span', 'desk-what', item.what));
+    row.append(el('span', 'desk-dot ' + item.level), text);
+    if (item.id) {
+      const tick = el('button', 'desk-tick');
+      tick.title = 'Mark done';
+      tick.setAttribute('aria-label', `Mark ${item.who}'s message done`);
+      tick.appendChild(el('i', 'ph ph-check'));
+      tick.onclick = async () => {
+        tick.disabled = true;
+        try { await fetch(`/api/messages/${item.id}/done?session=${S}`, { method: 'POST' }); } catch (e) {}
+        loadDashboard();
+      };
+      row.appendChild(tick);
+    }
+    alerts.appendChild(row);
+  }
+  if (items.length > DESK_SHOWN) alerts.appendChild(el('div', 'desk-more', `+${items.length - DESK_SHOWN} more`));
+  box.appendChild(alerts);
+
+  if (data.actions.length) {
+    const last = el('div', 'desk-last');
+    last.title = data.actions[0].text;
+    last.append(el('b', null, 'Latest: '), data.actions[0].text);
+    box.appendChild(last);
+  }
+}
+
+
 async function loadPracticeInfo() {
   const box = document.getElementById('practice');
   try {
@@ -910,7 +1032,7 @@ async function loadPracticeInfo() {
 }
 
 loadReminders();
-restoreRegistered().then(loadDemoPatients);
+restoreRegistered().then(loadDemoPatients).then(loadDashboard);
 loadPracticeInfo();
 </script>
 </body>

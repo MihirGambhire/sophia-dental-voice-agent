@@ -1470,6 +1470,41 @@ every turn it is now 1250. Replayed at 7:30am: "10 am, 12 pm, 3 pm, and
 
 ---
 
+### 48. A reception desk, and the version that was too much
+
+**Asked for.** A view of what the practice team would need after Sophia's
+calls: appointments, what is urgent, and who deals with what.
+
+**First version, rejected.** A separate page with a week's calendar,
+every message, every action and a card per call. The owner's verdict:
+too much, and in the wrong place. The second, a dashboard tab on the call
+page, was still a page of cards. What stayed is one small box at the top
+of the side column: three numbers (booked today, urgent slots left, to
+call back), at most three one line alerts with who each is for and a tick
+to mark it done, and one line for the latest thing Sophia did.
+
+**Underneath, all in code.** Each message is triaged when taken: the
+safety screen runs over the message and everything the caller said, so a
+message about treatment options from a caller who mentioned a swollen face
+is urgent and goes to the duty dentist. Complaints go to the practice
+manager, clinical questions to a dentist, the rest to reception. Every
+call gets a summary when it ends, built from what happened: who, what they
+asked about, what was booked, cancelled or left, and any safety flag. A
+call that raised a same day problem and ended with nothing booked and no
+message is flagged for follow up, which is exactly the swollen face call a
+tester made. Nothing in the box is written by the model, so it cannot
+report a booking that was not made, and it costs no quota.
+
+**Also.** Cancellations now record that Sophia made them. A database from
+before this change gains the new columns when opened. The call page lost
+its footer at the owner's request (the header badge still labels the
+demo), and the call panel now stretches to the side column's height with
+the transcript filling the space, after a tester found empty space below
+it on a laptop screen. A dash in a reply is now read aloud as a pause, or
+"to" between numbers, after "severe-for example" ran words together.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns

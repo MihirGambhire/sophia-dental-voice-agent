@@ -224,6 +224,7 @@ src/sophia/
   voice_app.py  Pipecat pipeline, turn taking, web server
   sessions.py   per tester database copy and transcript
   demo.py       the demo patient list shown to testers
+  dashboard.py  reception desk: message triage, call summaries
   web_audio.py  PCM wire format for the WebSocket
 evals/          live scenario suite, framework and scenarios
 scripts/        init_db, chat, check_setup, list_models, run_evals

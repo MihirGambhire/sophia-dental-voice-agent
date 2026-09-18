@@ -29,7 +29,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
-from . import clock, config, knowledge, policies
+from . import clock, config, dashboard, knowledge, policies
 from .policies import PatientFacts
 
 # Availability is searched on this grid. Ten minutes keeps the number of
@@ -465,6 +465,8 @@ class SophiaTools:
         self.bookings_made: list[dict] = []
         # The message taken on this call, if any. Later additions join it.
         self.message_id: int | None = None
+        # Cancellations made on this call, for the call summary.
+        self.cancellations_made: list[str] = []
         # True once the caller has said they are new to the practice, False
         # once they have said they have been before, None until either.
         # Set by the agent from the caller's own words.
@@ -1523,9 +1525,11 @@ class SophiaTools:
         short_notice = policies.is_short_notice(start, self.now)
 
         self.conn.execute(
-            "UPDATE appointments SET status = ?, cancelled_at = ? WHERE id = ?",
+            "UPDATE appointments SET status = ?, cancelled_at = ?, cancelled_via = 'sophia' WHERE id = ?",
             ("snc" if short_notice else "cancelled", clock.to_db(self.now), appointment_id),
         )
+        type_name = self._type_row(appointment["type_code"])["name"]
+        self.cancellations_made.append(f"{type_name}, {clock.spoken_datetime(start)}")
         if short_notice:
             self.conn.execute(
                 "INSERT INTO attendance_events (patient_id, event_type, event_date, appointment_id, notes) "
@@ -1674,17 +1678,23 @@ class SophiaTools:
         if self.message_id is not None:
             row = self.conn.execute("SELECT reason, detail FROM messages WHERE id = ?", (self.message_id,)).fetchone()
             extra = "; ".join(part for part in (reason, detail) if part)
+            joined = "; ".join(part for part in (row["detail"], extra) if part)
+            urgency, assigned_to = dashboard.triage_message(row["reason"], joined, self.caller_heard)
             self.conn.execute(
-                "UPDATE messages SET callback_number = ?, detail = ? WHERE id = ?",
-                (number, "; ".join(part for part in (row["detail"], extra) if part), self.message_id),
+                "UPDATE messages SET callback_number = ?, detail = ?, urgency = ?, assigned_to = ? WHERE id = ?",
+                (number, joined, urgency, assigned_to, self.message_id),
             )
             self.conn.commit()
             return {"taken": True, "message_id": self.message_id, "added_to_earlier_message": True,
                     "say": f"I have added that to your message for the team, {first}."}
 
+        # How urgent, and for whom, is decided by rules over the whole call:
+        # a tester asked about treatments, mentioned a swollen face while
+        # leaving the message, and that message has to reach a dentist today.
+        urgency, assigned_to = dashboard.triage_message(reason, detail, self.caller_heard)
         cursor = self.conn.execute(
-            "INSERT INTO messages (caller_name, callback_number, patient_id, reason, detail, created_at, status) "
-            "VALUES (?, ?, ?, ?, ?, ?, 'open')",
+            "INSERT INTO messages (caller_name, callback_number, patient_id, reason, detail, created_at, status, "
+            "urgency, assigned_to) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?)",
             (
                 caller_name.strip(),
                 number,
@@ -1692,6 +1702,8 @@ class SophiaTools:
                 reason,
                 detail,
                 clock.to_db(self.now),
+                urgency,
+                assigned_to,
             ),
         )
         self.conn.commit()

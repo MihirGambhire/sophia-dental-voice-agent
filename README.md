@@ -120,6 +120,14 @@ cut herself off. Sentences split by a pause are treated as one.
 the first sentence and whenever asked. Anything outside the data becomes a
 message for the human team.
 
+**A reception desk for the team.** A small box beside the call shows what
+needs a person: messages most urgent first, each routed to the duty
+dentist, a dentist, the practice manager or reception, with the call back
+number, plus calls that raised a same day problem and ended with nothing
+booked. Urgency comes from the same safety screen as the calls and routing
+from rules in code, and each call's summary is built from what actually
+happened on it, never written by the model.
+
 ---
 
 ## Design principle: the model talks, the code decides
@@ -395,6 +403,7 @@ src/sophia/
   voice_app.py      The voice pipeline, turn taking and the web server
   sessions.py       A private copy of the demo data per tester
   demo.py           The invented patients a tester can call as
+  dashboard.py      The reception desk: message triage and call summaries
   web_audio.py      The wire format for call audio
 evals/              The scenario suite: framework and scripted calls
 scripts/            init_db, chat, check_setup, list_models, run_evals
