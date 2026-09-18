@@ -1058,6 +1058,7 @@ class SophiaTools:
         limit: int = 5,
         after_time: str | None = None,
         before_time: str | None = None,
+        on_date: str | None = None,
     ) -> dict:
         """
         Real availability, computed from working hours minus what is booked.
@@ -1097,7 +1098,25 @@ class SophiaTools:
 
         horizon = days_ahead or config.DEFAULT_SEARCH_DAYS
         start_day = self.now.date()
-        if earliest_date:
+
+        # One day only. A tester asked for "any other slot on the same day",
+        # and the search could only give the first free time on each of the
+        # next few days, so Sophia had nothing to offer and said "no other
+        # slots today since the practice is closed". It was not.
+        single_day = None
+        if on_date:
+            try:
+                single_day = datetime.strptime(on_date, clock.DB_DATE_FORMAT).date()
+            except ValueError:
+                single_day = None
+        if single_day is not None:
+            if single_day < self.now.date():
+                return {"slots": [], "reason": "in_the_past", "say": "That day has already passed."}
+            if not clock.is_open_day(single_day):
+                return {"slots": [], "reason": "closed_that_day",
+                        "say": "The practice is closed that day. It is open Monday to Friday."}
+            start_day, horizon = single_day, 1
+        elif earliest_date:
             try:
                 requested = datetime.strptime(earliest_date, clock.DB_DATE_FORMAT).date()
                 start_day = max(start_day, requested)
@@ -1163,8 +1182,11 @@ class SophiaTools:
                 break
 
         found.sort(key=lambda slot: slot.start)
-        chosen = _spread(found, limit)
+        chosen = _spread_within_day(found, limit) if single_day is not None else _spread(found, limit)
         self.offered_slots = [slot.as_dict() for slot in chosen]
+        if single_day is not None and not chosen:
+            return {"slots": [], "reason": "day_full",
+                    "say": "There is nothing free that day. Shall I look at the next day instead?"}
 
         return {
             "appointment_type": type_row["name"],
@@ -1799,6 +1821,27 @@ class SophiaTools:
                 else "seen within the last three years"
             ),
         }
+
+
+def _spread_within_day(slots: list[Slot], limit: int) -> list[Slot]:
+    """
+    A handful of times across one day, each in a different hour.
+
+    Ten minute slots mean a free morning has dozens; reading out 9:00,
+    9:10 and 9:20 is no choice at all. Taking the first free slot in each
+    hour, then thinning those evenly, covers the morning and the afternoon.
+    """
+    first_in_hour: dict[tuple[int, int], Slot] = {}
+    for slot in slots:
+        first_in_hour.setdefault((slot.start.hour, slot.clinician_id), slot)
+    by_hour: dict[int, Slot] = {}
+    for (hour, _), slot in sorted(first_in_hour.items(), key=lambda item: item[1].start):
+        by_hour.setdefault(hour, slot)
+    hourly = sorted(by_hour.values(), key=lambda slot: slot.start)
+    if len(hourly) <= limit:
+        return hourly
+    step = (len(hourly) - 1) / (limit - 1) if limit > 1 else 0
+    return [hourly[round(index * step)] for index in range(limit)]
 
 
 def _spread(slots: list[Slot], limit: int) -> list[Slot]:

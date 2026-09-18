@@ -1448,6 +1448,28 @@ already on file: found, and straight on to booking.
 
 ---
 
+### 47. "Any other slot on the same day?"
+
+**Symptom.** Offered Friday at 8am, a tester asked for another time that
+day and heard "we don't have any other slots available today since the
+practice is closed". Friday had most of its day free.
+
+**Cause.** The slot search could only return the first free time on each
+of the next few days, spread for choice. It had no way to list several
+times on one day, so after two searches the model had nothing for Friday
+but 8am and invented a reason. The lookup guard let it through, because
+a lookup had happened.
+
+**Fix.** `find_available_slots` takes `on_date` and returns times on that
+day only, the first free slot in each hour, thinned evenly so morning and
+afternoon are both offered. A weekend or a past day comes back as closed
+or passed, not as empty. The tool schemas grew past their 1200 token
+budget, set for Groq's 8000 tokens a minute; with Gemini answering almost
+every turn it is now 1250. Replayed at 7:30am: "10 am, 12 pm, 3 pm, and
+5 pm" on Friday.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns

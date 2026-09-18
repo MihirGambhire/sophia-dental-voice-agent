@@ -1174,3 +1174,27 @@ def test_a_verified_patient_is_called_back_on_the_number_on_record(conn):
     session = at(conn, a_weekday_at(10))
     session.verify_patient(row["full_name"], row["dob"], row["postcode"])
     assert session.take_message(row["full_name"], "Question for the dentist")["taken"] is True
+
+
+# ---------------------------------------------------------------------------
+# Times on one particular day
+# ---------------------------------------------------------------------------
+
+
+def test_a_single_day_offers_several_times_across_it(conn):
+    """"Any other slot on the same day?" had no answer, and Sophia said the practice was closed."""
+    session = at(conn, a_weekday_at(7, 30))
+    day = session.now.date().isoformat()
+    result = session.find_available_slots("PRIV_NEW_EXAM", on_date=day)
+    starts = [slot["time"] for slot in result["slots"]]
+    assert len(starts) >= 3
+    assert all(slot["date"] == day for slot in result["slots"])
+    assert len({time[:2] for time in starts}) == len(starts)  # each in a different hour
+    assert any(time >= "12:00" for time in starts) and any(time < "12:00" for time in starts)
+
+
+def test_a_weekend_day_is_closed_not_empty(conn):
+    session = at(conn, a_weekday_at(10))
+    saturday = session.now.date() + timedelta(days=(5 - session.now.weekday()) % 7)
+    result = session.find_available_slots("PRIV_NEW_EXAM", on_date=saturday.isoformat())
+    assert result["reason"] == "closed_that_day"

@@ -124,8 +124,12 @@ def test_the_tool_schemas_stay_inside_the_token_budget():
     every request. Groq's free tier allows 8000 tokens per minute. When
     this file cost 1719 tokens, a conversation was throttled after about
     four turns, which showed up as 20 to 90 second stalls mid call.
+
+    Raised from 1200 to 1250 on 18 September 2026 for on_date, which lets
+    Sophia list times on one day. Groq is now only the last fallback, and
+    Gemini, which answers almost every turn, allows far more per minute.
     """
-    assert estimated_tokens() < 1200, (
+    assert estimated_tokens() < 1250, (
         "tool schemas have grown, which will throttle the free tier mid conversation"
     )
 
