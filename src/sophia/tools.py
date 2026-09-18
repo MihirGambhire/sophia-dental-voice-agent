@@ -467,6 +467,8 @@ class SophiaTools:
         # once they have said they have been before, None until either.
         # Set by the agent from the caller's own words.
         self.caller_said_new: bool | None = None
+        # The name the caller gave, if they have, set by the agent.
+        self.caller_name: str | None = None
         # A booking the model tried before the caller was identified, so it
         # can be finished straight after, instead of "how can I help?".
         self.waiting_booking: dict | None = None
@@ -524,7 +526,13 @@ class SophiaTools:
             "SELECT * FROM appointment_types WHERE code = ?", (type_code,)
         ).fetchone()
         if row is None:
-            raise ToolError(f"There is no appointment type called {type_code}.")
+            # The model guessed "PV-EXAM" for a fee question and got nothing
+            # back to correct itself with, so the caller heard no price.
+            known = ", ".join(
+                f"{r['code']} ({r['name']})"
+                for r in self.conn.execute("SELECT code, name FROM appointment_types ORDER BY code")
+            )
+            raise ToolError(f"There is no appointment type called {type_code}. The types are: {known}.")
         return row
 
     # -- 1. verification --------------------------------------------------
@@ -567,7 +575,7 @@ class SophiaTools:
                 "verified": False,
                 "reason": "missing_details",
                 "missing": missing,
-                "say": f"Could you tell me your {' and '.join(missing)}, please?",
+                "say": self._ask_for(missing),
             }
 
         normalised_dob = _normalise_dob(dob)
@@ -720,6 +728,21 @@ class SophiaTools:
             ),
         }
 
+    def _ask_for(self, missing: list[str]) -> str:
+        """
+        Ask for missing details, confirming a name the caller already gave.
+
+        The model passed "unknown" for a name the caller had said at the
+        start of the call, and the caller was asked for it again.
+        """
+        if "full name" in missing and self.caller_name:
+            rest = [label for label in missing if label != "full name"]
+            ask = f"Just to confirm, your name is {self.caller_name}?"
+            if rest:
+                ask += f" And could you tell me your {' and '.join(rest)}, please?"
+            return ask
+        return f"Could you tell me your {' and '.join(missing)}, please?"
+
     def _carry_on(self) -> dict:
         """
         What to do next, once the caller is identified.
@@ -779,7 +802,7 @@ class SophiaTools:
                              ("postcode", postcode), ("phone number", phone)):
             if (value or "").strip().casefold() in _PLACEHOLDERS:
                 return {"registered": False, "reason": "missing_details", "missing": [label],
-                        "say": f"Could you tell me your {label}, please?"}
+                        "say": self._ask_for([label])}
 
         if self.expected_patient_id is not None:
             raise ToolError("New patients cannot be registered on an outbound call.")
@@ -1608,21 +1631,29 @@ class SophiaTools:
         The model says what the caller wants in plain words. The eligibility
         rules, and therefore the fee, are decided here.
         """
-        patient_id = self._require_verified()
-        patient = self._patient_row(patient_id)
-        facts = PatientFacts.from_row(patient)
+        if self.verified_patient_id is None and self.caller_said_new:
+            # Someone new to the practice has no record to read, and the
+            # rules already cover them: never seen, so a new patient type,
+            # private unless they asked for NHS. A tester asking "how much
+            # will that cost?" was told it could be checked once registered.
+            facts = PatientFacts(patient_type="private")
+            on_record = "private"
+        else:
+            patient = self._patient_row(self._require_verified())
+            facts = PatientFacts.from_row(patient)
+            on_record = patient["patient_type"]
         # Funding decides the fee, so the model does not get to choose it.
         # A fallback model once sent "private" for an NHS patient who had
         # said nothing about paying privately, and quoted £50 for a £27.90
         # check up. An override now counts only if the caller asked for it.
         if (
             funding
-            and funding != patient["patient_type"]
+            and funding != on_record
             and self.caller_heard is not None
             and not _funding_was_asked_for(funding, self.caller_heard)
         ):
             funding = None
-        funding = funding or patient["patient_type"]
+        funding = funding or on_record
         today = self.now.date()
 
         if purpose == "check_up":

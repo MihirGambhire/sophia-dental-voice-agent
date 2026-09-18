@@ -27,9 +27,12 @@ from .tools import SophiaTools, ToolError
 # the free tier.
 MAX_TOOL_ROUNDS = 6
 
-# How many completed exchanges to keep in full. Older ones are compacted,
-# see _compact_history for why this matters so much on a free tier.
-KEEP_RECENT_TURNS = 6
+# How many completed exchanges to keep as what was said. Older ones are
+# dropped, see _compact_history for why this matters on a free tier.
+KEEP_RECENT_TURNS = 12
+# How many of those keep their tool calls and results too, so Sophia still
+# knows the fee or the practice fact she looked up a moment ago.
+KEEP_TOOL_RESULTS_TURNS = 3
 
 # Characters models reach for that either crash a Windows console or break
 # the project's writing rule. Mapped to plain equivalents on the way out.
@@ -157,7 +160,7 @@ class TurnRecord:
 
         Kept on the record rather than read back out of the message
         history, because the history is compacted between turns and the
-        tool messages are deliberately dropped.
+        older tool messages are dropped.
         """
         for name, result in self.tool_results:
             if name == tool_name:
@@ -185,6 +188,57 @@ _SAYS_EXISTING = re.compile(
     r"|\bi have been (a patient|coming)\b",
     re.IGNORECASE,
 )
+
+
+# The caller's name, from their own words. A tester opened with "hi sophia
+# my name is mihir gambhire" and was asked "what is your name?" a few turns
+# later, while booking. "I'm" and "it's" only count after Sophia asked for a
+# name, because "I'm new" and "it's my tooth" are not names.
+_NAME_ALWAYS = re.compile(
+    r"\b(?:my name is|my name's|name is|you'?re speaking (?:to|with))\s+(.+)"
+    # "this is" only as a greeting, since "this is really painful" is not a name
+    r"|^\W*(?:(?:hi|hello|hiya|good (?:morning|afternoon))\W+)?(?:sophia\W+)?this is\s+(.+)",
+    re.IGNORECASE,
+)
+_NAME_WHEN_ASKED = re.compile(r"^\W*(?:(?:it'?s|it is|i'?m|i am)\s+)?(.+)", re.IGNORECASE)
+_ASKED_FOR_NAME = re.compile(r"\b(your (full )?name|who am i speaking|who'?s calling|first name and surname)\b", re.IGNORECASE)
+_NOT_A_NAME = {
+    "and", "i", "im", "i'm", "calling", "from", "here", "speaking", "please", "the", "a", "an", "new",
+    "patient", "so", "but", "just", "wanted", "want", "would", "need", "looking", "ringing", "sophia",
+    "hi", "hello", "yes", "no", "sure", "ok", "okay", "thanks", "thank", "as", "mentioned", "above", "it",
+    "is", "my", "to", "about", "for", "with", "not", "sorry", "um", "uh", "er", "well", "again",
+    "it's", "its", "i've", "i'd", "i'll", "really", "very",
+}
+
+
+def name_the_caller_gave(said: str, last_reply: str) -> str | None:
+    """A name the caller has just told Sophia, if any, title cased."""
+    match = _NAME_ALWAYS.search(said)
+    if match is None and _ASKED_FOR_NAME.search(last_reply or ""):
+        match = _NAME_WHEN_ASKED.search(said)
+    if match is None:
+        return None
+    # Filler before the name ("as I mentioned, it is Mihir") is skipped only
+    # in an answer to "what is your name?". After "this is", a word that
+    # cannot be a name means it was never an introduction.
+    answering = match.re is _NAME_WHEN_ASKED
+    # "mihir gambhire, I'd like a check up": the name ends at the comma. In an
+    # answer, the name is in the last part: "as I mentioned above, it is Mihir".
+    parts = [p for p in re.split(r"[,.!?;]", match.group(match.lastindex or 1)) if p.strip()]
+    if not parts:
+        return None
+    words = []
+    for word in re.findall(r"[A-Za-z][A-Za-z'\-]*", parts[-1] if answering else parts[0]):
+        if word.lower() in _NOT_A_NAME:
+            if words or not answering:
+                break
+            continue
+        words.append(word)
+        if len(words) == 3:
+            break
+    if not words:
+        return None
+    return " ".join(w[:1].upper() + w[1:].lower() for w in words)
 
 
 def said_new_or_existing(said: str, last_reply: str) -> bool | None:
@@ -314,6 +368,12 @@ class SophiaAgent:
             lines.append(f"Verified caller: {self.tools.verified_name}. Do not verify again.")
         else:
             lines.append("Caller NOT verified yet.")
+            if self.tools.caller_name:
+                lines.append(
+                    f"The caller already said their name: {self.tools.caller_name}. Never ask for it "
+                    f'again. When taking details, confirm it instead: "Just to confirm, your name is '
+                    f'{self.tools.caller_name}?" and pass it to the tools.'
+                )
 
         if self.tools.offered_slots:
             lines.append("Times already offered, book one of these by its ref:")
@@ -388,7 +448,14 @@ class SophiaAgent:
         if tools.caller_said_new is True:
             identify = (
                 "The caller has said they are NEW to the practice: take name, date of birth, "
-                "postcode and phone, then register_new_patient. Never use verify_patient for them."
+                "postcode and phone, then register_new_patient. Never use verify_patient for them. "
+                "Anything else they tell you meanwhile, such as NHS or private or a preferred "
+                "day or time, acknowledge briefly and use it later; answer questions they ask."
+                + (
+                    " This is a demo: pass the postcode and phone number exactly as they said them, "
+                    "whatever the format, and never ask for a UK one."
+                    if config.DEMO_RELAXED_DETAILS else ""
+                )
             )
         elif tools.caller_said_new is False:
             identify = "The caller has said they have been here before: name, date of birth, postcode, verify_patient."
@@ -408,28 +475,45 @@ class SophiaAgent:
         Trim the transcript between turns, keeping the conclusions.
 
         Every turn resends the whole conversation, so an unbounded history
-        grows quadratically in tokens. Tool call and tool result messages
-        are dropped, because the state block above carries what they
-        established, and the plain text of recent exchanges is kept.
+        grows quadratically in tokens. The last few exchanges are kept
+        whole, tool calls and results included. Older ones keep only what
+        was said, and the oldest are dropped.
+
+        The first version dropped every tool result after its own turn, on
+        the grounds that the state block carried what they established. It
+        carries identity, slots and bookings, but not a fee or a practice
+        fact, so a tester found Sophia forgetting within two or three
+        turns what she had just looked up. That rule was written for Groq's
+        8000 tokens a minute; Gemini, the model now in use, allows far more.
 
         This only ever runs between turns, never mid sequence, because a
         tool result message must stay immediately after the assistant
         message that asked for it or the API rejects the conversation.
+        Exchanges are therefore cut at the caller's messages, never inside.
         """
         system, greeting = self.messages[0], self.messages[1]
-        body = self.messages[2:]
 
-        plain = [
-            message
-            for message in body
-            if message["role"] in ("user", "assistant")
-            and not message.get("tool_calls")
-            and message.get("content")
-        ]
+        exchanges: list[list[dict]] = []
+        for message in self.messages[2:]:
+            if message["role"] == "user" or not exchanges:
+                exchanges.append([])
+            exchanges[-1].append(message)
+        exchanges = exchanges[-KEEP_RECENT_TURNS:]
 
-        # Keep two messages per exchange: what the caller said, what Sophia said.
-        keep = plain[-(KEEP_RECENT_TURNS * 2) :]
-        self.messages = [system, greeting, *keep]
+        kept: list[dict] = []
+        whole_from = len(exchanges) - KEEP_TOOL_RESULTS_TURNS
+        for index, exchange in enumerate(exchanges):
+            if index >= whole_from:
+                kept.extend(exchange)
+            else:
+                # Two messages per exchange: what the caller said, what Sophia said.
+                kept.extend(
+                    message for message in exchange
+                    if message["role"] in ("user", "assistant")
+                    and not message.get("tool_calls")
+                    and message.get("content")
+                )
+        self.messages = [system, greeting, *kept]
 
     # -- tool dispatch ----------------------------------------------------
 
@@ -468,6 +552,10 @@ class SophiaAgent:
         new_or_existing = said_new_or_existing(text, last_reply)
         if new_or_existing is not None:
             self.tools.caller_said_new = new_or_existing
+        name = name_the_caller_gave(text, last_reply)
+        # A fuller name replaces a first name, never the other way round.
+        if name and len(name.split()) >= len((self.tools.caller_name or "").split()):
+            self.tools.caller_name = name
         screening = safety.screen(text)
         if screening.level is not safety.Level.ROUTINE:
             self.last_screening = screening

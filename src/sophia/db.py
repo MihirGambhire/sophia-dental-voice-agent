@@ -440,20 +440,27 @@ def seed_reminder_queue(conn: sqlite3.Connection) -> None:
     """
     Queue the outbound calls used in phase 2.
 
-    Day before reminders for every appointment happening tomorrow, plus
-    recall calls for patients who are overdue a check up but not yet past
-    the three year registration lapse.
+    Reminders for every appointment on the next day the practice is open,
+    plus recall calls for patients who are overdue a check up but not yet
+    past the three year registration lapse.
+
+    The next open day, not tomorrow: on a Friday tomorrow is a Saturday,
+    the queue came out empty, and the demo's reminder calls disappeared
+    every Friday and weekend. Monday's reminders are due now, as a
+    practice would ring on its last working day before.
     """
     now_local = clock.now()
-    tomorrow = clock.today() + timedelta(days=1)
+    next_open = clock.today() + timedelta(days=1)
+    while not clock.is_open_day(next_open):
+        next_open += timedelta(days=1)
 
     upcoming = conn.execute(
         "SELECT id, patient_id, start_time FROM appointments "
         "WHERE status = 'booked' AND date(start_time) = ?",
-        (tomorrow.strftime(clock.DB_DATE_FORMAT),),
+        (next_open.strftime(clock.DB_DATE_FORMAT),),
     ).fetchall()
     for appointment in upcoming:
-        due = clock.from_db(appointment["start_time"]) - timedelta(days=1)
+        due = min(clock.from_db(appointment["start_time"]) - timedelta(days=1), now_local)
         conn.execute(
             "INSERT INTO reminder_queue (patient_id, appointment_id, reason, due_at, status) "
             "VALUES (?, ?, 'day_before', ?, 'pending')",

@@ -507,3 +507,53 @@ def test_a_caller_who_looked_at_urgent_slots_is_steered_back_to_them(conn):
     session.offered_urgent = [{"urgent_slot_id": 3, "when": "11:40 am"}]
     result = register(session)
     assert "book_urgent_slot" in result["next"] and "Not a check up" in result["next"]
+
+
+@pytest.mark.parametrize(
+    "said, last_reply, expected",
+    [
+        ("hi sophia my name is mihir gambhire, i need an urgent appointment", "How can I help?", "Mihir Gambhire"),
+        ("Hello, this is Priya Sharma calling about a check up", "How can I help?", "Priya Sharma"),
+        ("It's Mihir Gambhire", "Could you tell me your full name, please?", "Mihir Gambhire"),
+        ("as I mentioned above, it is Mihir Gambhire", "Could you tell me your full name?", "Mihir Gambhire"),
+        ("I'm new here", "How can I help?", None),
+        ("this is really painful", "How can I help?", None),
+        ("sure, it's Mihir", "Could you tell me your full name?", "Mihir"),
+        ("hi sophia my name is mihir gambhire, I'd like a check up", "How can I help?", "Mihir Gambhire"),
+        ("it's my back tooth", "Which tooth is it?", None),
+        ("yes please", "Could I take your first name and surname?", None),
+    ],
+)
+def test_the_callers_name_is_picked_up_from_what_they_say(said, last_reply, expected):
+    from sophia.agent_text import name_the_caller_gave
+
+    assert name_the_caller_gave(said, last_reply) == expected
+
+
+def test_a_name_already_given_is_confirmed_not_asked_for_again(conn):
+    """A tester said his name at the start and was asked for it again while booking."""
+    session = caller(conn)
+    session.caller_name = "Priya Sharma"
+    result = register(session, name="unknown")
+    assert result["say"] == "Just to confirm, your name is Priya Sharma?"
+
+
+def test_a_new_caller_can_hear_the_type_and_fee_before_registering(conn):
+    session = caller(conn)
+    session.caller_said_new = True
+    result = session.recommend_appointment_type("check_up", "private")
+    assert result["appointment_type"] == "PRIV_NEW_EXAM" and result["fee"] == "£85"
+
+
+def test_an_unidentified_caller_who_has_not_said_they_are_new_is_still_refused(conn):
+    from sophia.tools import ToolError
+
+    with pytest.raises(ToolError):
+        caller(conn).recommend_appointment_type("check_up", "private")
+
+
+def test_a_wrong_appointment_type_lists_the_real_ones(conn):
+    from sophia.tools import ToolError
+
+    with pytest.raises(ToolError, match="PRIV_NEW_EXAM"):
+        caller(conn).get_fee("PV-EXAM")

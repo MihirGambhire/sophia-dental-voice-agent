@@ -1283,6 +1283,47 @@ replay of the call then registered him and booked the urgent appointment.
 
 ---
 
+### 41. "She forgets what I said in the same call"
+
+**Symptom.** A tester opened with "hi sophia my name is mihir gambhire",
+and a few turns later, while booking, was asked "what is your full name?".
+He expected "just to confirm, your name is Mihir Gambhire?".
+
+**Cause, found by dumping exactly what the model was sent.** The words of
+recent turns were there. Everything the tools had returned was not: after
+every turn the history kept only what was said, on the theory that the
+state block carried the conclusions. It carried identity, offered slots
+and bookings, and nothing else. So a fee looked up one turn was gone the
+next, and nothing anywhere held the caller's name until verification. The
+rule dated from Groq's 8000 tokens a minute; Gemini is now the model.
+
+A live run turned up four more: the name was caught as "Mihir Gambhire
+I'd"; the first message, with the reason for calling, fell out of the
+history after seven turns; a fee question from a new caller got "I can
+check once you're registered", because the type tool refused anyone
+unverified and the fee tool rejected the code the model guessed without
+saying which codes exist; and a made up postcode was answered with "could
+you give a valid UK postcode?", since only the tool knew the demo accepts
+any.
+
+**Fix.** The last three exchanges keep their tool calls and results, and
+twelve keep what was said, cut only at the caller's messages so a tool
+result never loses the call that asked for it. The name is read from the
+caller's words ("my name is", "this is" as a greeting, or any answer to a
+name question) and carried in the call state with an instruction to confirm
+it, not ask; a tool missing the name now asks "Just to confirm, your name
+is Mihir Gambhire?". A caller who said they are new is told the type and
+fee before registering, from the same rules. An unknown appointment type
+lists the real ones. In the demo the call state says to pass any postcode
+as said. Replayed, the call confirmed his name, quoted £85, took 411027,
+and offered morning slots because he had said mornings suit him.
+
+**Also found.** The outbound queue was empty every Friday and weekend:
+it held reminders for tomorrow, and tomorrow was Saturday. It now covers
+the next day the practice is open, which made nine failing tests pass.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns

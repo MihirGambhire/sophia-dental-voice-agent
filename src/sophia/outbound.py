@@ -156,7 +156,7 @@ def greeting(reminder: Reminder) -> str:
 def call_context(reminder: Reminder) -> str:
     """The part of the call state that is specific to an outbound call."""
     purpose = (
-        "to remind them about an appointment tomorrow, and confirm, move or cancel it"
+        "to remind them about their next appointment, and confirm, move or cancel it"
         if reminder.reason == "day_before"
         else "because they are due a check up, and to offer to book one"
     )

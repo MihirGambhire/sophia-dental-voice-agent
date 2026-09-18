@@ -721,3 +721,47 @@ def test_the_call_state_says_a_new_caller_must_be_registered(conn):
     agent.say("nope")
     stage = agent._call_stage()
     assert "NEW to the practice" in stage and "Never use verify_patient" in stage
+
+
+def test_recent_tool_results_are_kept_between_turns(conn):
+    """A tester found Sophia forgetting, two turns later, the fee she had just looked up."""
+    agent = agent_with(conn, [
+        tool_response([("search_practice_info", {"question": "new patient exam fee"})]),
+        text_response("A new patient examination is eighty five pounds."),
+        text_response("Could I take your date of birth?"),
+    ])
+    agent.say("How much is a new patient exam?")
+    agent.say("I'm new")
+    roles = [m["role"] for m in agent.messages]
+    assert "tool" in roles
+    assert any(m.get("tool_calls") for m in agent.messages)
+
+
+def test_old_tool_results_are_dropped_but_what_was_said_is_kept(conn):
+    from sophia.agent_text import KEEP_TOOL_RESULTS_TURNS
+
+    turns = KEEP_TOOL_RESULTS_TURNS + 2
+    responses = []
+    for n in range(turns):
+        responses += [tool_response([("search_practice_info", {"question": f"q{n}"})]), text_response(f"answer {n}")]
+    agent = agent_with(conn, responses)
+    for n in range(turns):
+        agent.say(f"question {n}")
+
+    tool_messages = [m for m in agent.messages if m["role"] == "tool"]
+    assert len(tool_messages) == KEEP_TOOL_RESULTS_TURNS
+    said = [m["content"] for m in agent.messages if m["role"] == "user"]
+    assert said == [f"question {n}" for n in range(turns)]
+    # Every tool result still follows the message that asked for it.
+    for index, message in enumerate(agent.messages):
+        if message["role"] == "tool":
+            assert agent.messages[index - 1]["role"] in ("assistant", "tool")
+
+
+def test_the_call_state_remembers_the_name_the_caller_gave(conn):
+    agent = agent_with(conn, [text_response("Is it urgent?"), text_response("Have you been here before?")])
+    agent.say("Hi Sophia, my name is Mihir Gambhire, I need an appointment")
+    agent.say("No it's not urgent")
+    state = agent._state_block()
+    assert "already said their name: Mihir Gambhire" in state
+    assert "Just to confirm, your name is Mihir Gambhire?" in state
