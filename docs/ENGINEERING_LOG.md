@@ -1324,6 +1324,36 @@ the next day the practice is open, which made nine failing tests pass.
 
 ---
 
+### 42. Hanging up, and new patients who vanished overnight
+
+**Asked for.** The call should end after the goodbye, and a patient
+registered on one call should be there on the next.
+
+**Hanging up.** Both sides must have finished: the caller says they are
+done ("that's all, thanks") and Sophia's reply is a goodbye. Either alone
+is not enough, since "no thanks" to "shall I book that?" is not the end of
+a call, and "have a lovely day" can close an answer to a caller still
+asking. Checked in code on each turn. The voice layer waits for her to
+stop speaking, a second more for the browser's buffer, then ends the
+pipeline, which closes the socket, and the page shows "Sophia ended the
+call after saying goodbye". Speaking or typing in that second cancels it.
+
+**Patients that vanished.** The page already listed registered patients,
+but only refreshed after a call, and on Render they did not last: the free
+plan wipes the server's files when it sleeps after fifteen idle minutes
+and on every deploy. The browser now keeps a copy of the patients the
+tester registered and sends them back before the list loads and before
+every call; the server adds any it no longer has, after checking each is
+shaped like a registration, into that tester's own copy of the data. The
+Patients tab also refreshes the moment a registration or booking happens.
+Their bookings are not restored, only the records.
+
+**Checked in the browser.** A typed call registered Asha Verma, who
+appeared in the tab mid call, booked, said "no, that's all, thank you",
+and the call ended itself. After a server restart she was still there.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns
