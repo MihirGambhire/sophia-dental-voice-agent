@@ -469,6 +469,8 @@ class SophiaTools:
         self.caller_said_new: bool | None = None
         # The name the caller gave, if they have, set by the agent.
         self.caller_name: str | None = None
+        # Details Sophia has asked this caller for, set by the agent.
+        self.details_asked_for: set[str] = set()
         # A booking the model tried before the caller was identified, so it
         # can be finished straight after, instead of "how can I help?".
         self.waiting_booking: dict | None = None
@@ -620,7 +622,7 @@ class SophiaTools:
                 "verified": False,
                 "reason": "missing_details",
                 "missing": ["postcode"],
-                "say": "Sorry, I want to be sure I have your postcode exactly right. Could you say it again, letter by letter?",
+                "say": self._ask_again_or_first("postcode"),
             }
 
         # On a call Sophia placed, the model already knows the patient's name,
@@ -743,6 +745,18 @@ class SophiaTools:
             return ask
         return f"Could you tell me your {' and '.join(missing)}, please?"
 
+    def _ask_again_or_first(self, label: str) -> str:
+        """
+        Ask for a detail the model passed but the caller never said.
+
+        Either the caller gave it and it was misheard, or the model made it
+        up before asking. Only the first deserves "again".
+        """
+        if label in self.details_asked_for:
+            letters = ", letter by letter" if label == "postcode" else ""
+            return f"Sorry, I want to be sure I have your {label} exactly right. Could you say it again{letters}?"
+        return f"Could you tell me your {label}, please?"
+
     def _carry_on(self) -> dict:
         """
         What to do next, once the caller is identified.
@@ -845,7 +859,7 @@ class SophiaTools:
             ]
             if unsaid:
                 return {"registered": False, "reason": "missing_details", "missing": unsaid,
-                        "say": f"Sorry, I want to be sure I have your {unsaid[0]} exactly right. Could you say it again?"}
+                        "say": self._ask_again_or_first(unsaid[0])}
 
             # Verification can try both readings of "05/04/1990", but a new
             # record stores one, and a wrong one would fail this patient on

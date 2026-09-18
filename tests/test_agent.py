@@ -786,3 +786,21 @@ def test_a_call_is_over_only_when_both_sides_have_finished(said, reply, expected
 def test_the_turn_record_says_when_the_call_is_over(conn):
     agent = agent_with(conn, [text_response("Thank you for calling. Goodbye.")])
     assert agent.say("No, that's everything, thanks").ends_call is True
+
+
+def test_a_name_is_not_confirmed_straight_after_it_was_given(conn):
+    """"Just to confirm, your name is Mihir Gambhire?" right after he said it."""
+    agent = agent_with(conn, [text_response("Could I take your full name?"), text_response("And your date of birth?"),
+                              text_response("And your postcode?")])
+    agent.say("I want to cancel my appointment")
+    agent.say("Mihir Gambhire")
+    # Asked about in the turn after, the name is known and can be confirmed.
+    assert agent.tools.caller_name == "Mihir Gambhire"
+    agent.say("13 April 2003")
+    assert "already said their name: Mihir Gambhire" in agent._state_block()
+
+
+def test_the_details_sophia_asked_for_are_remembered(conn):
+    agent = agent_with(conn, [text_response("Could you tell me your date of birth and postcode?")])
+    agent.say("I want to cancel my appointment")
+    assert agent.tools.details_asked_for == {"date of birth", "postcode"}

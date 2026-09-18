@@ -188,7 +188,12 @@ _SAYS_NEW = re.compile(
 )
 _SAYS_EXISTING = re.compile(
     r"\b(i'?m|i am) (an existing|already a|a registered) patient\b|\bi'?ve been (a patient|coming)\b"
-    r"|\bi have been (a patient|coming)\b",
+    r"|\bi have been (a patient|coming)\b"
+    # A tester said "I want to cancel my appointment" and was asked whether
+    # it was urgent and whether he had been a patient before. Only someone
+    # already on file has an appointment to cancel, move or check.
+    r"|\b(?:cancel|reschedule|move|change|rearrange|check|confirm)\b[^.?!]{0,25}\bmy\b[^.?!]{0,15}\bappointment"
+    r"|\bi (?:have|'?ve got|already have) (?:an|a) (?:appointment|booking)\b",
     re.IGNORECASE,
 )
 
@@ -260,6 +265,18 @@ _SOPHIA_FAREWELL = re.compile(
     r"(?:day|afternoon|evening|morning|weekend)|take care)\b",
     re.IGNORECASE,
 )
+
+
+# Which details a reply asks for. Used so that "could you say it again?" is
+# only ever said about something the caller has been asked for: a tester
+# heard "I want to be sure I have your postcode exactly right, could you
+# say it again?" before anyone had asked for his postcode.
+_ASKS_FOR_DETAIL = {
+    "postcode": re.compile(r"\bpostcode\b", re.IGNORECASE),
+    "date of birth": re.compile(r"\bdate of birth\b|\bbirthday\b", re.IGNORECASE),
+    "phone number": re.compile(r"\b(?:phone|contact|mobile) number\b", re.IGNORECASE),
+    "full name": re.compile(r"\byour (?:full )?name\b|\bfirst name and surname\b", re.IGNORECASE),
+}
 
 
 def call_is_over(said: str, reply: str) -> bool:
@@ -424,6 +441,12 @@ class SophiaAgent:
 
         return "\n".join(lines)
 
+    def _note_details_asked_for(self, reply: str) -> None:
+        """Remember which details Sophia has asked the caller for."""
+        for label, pattern in _ASKS_FOR_DETAIL.items():
+            if pattern.search(reply or ""):
+                self.tools.details_asked_for.add(label)
+
     def _call_stage(self) -> str:
         """
         Where the call is in the order every call follows, and the next step.
@@ -469,7 +492,8 @@ class SophiaAgent:
         urgency = (
             "They described a same day problem, so offer today's urgent appointments, not a routine check up. "
             if screening is not None and screening.level is safety.Level.URGENT
-            else "If they want an appointment and have not said why, first ask whether it needs seeing today. "
+            else "If they want to book an appointment and have not said why, first ask whether it needs "
+            "seeing today. Not for cancelling, moving or checking one. "
         )
         if tools.caller_said_new is True:
             identify = (
@@ -578,10 +602,11 @@ class SophiaAgent:
         new_or_existing = said_new_or_existing(text, last_reply)
         if new_or_existing is not None:
             self.tools.caller_said_new = new_or_existing
+        # Held until this turn is over. The name is in the caller's latest
+        # words, so the model has it; asking "just to confirm, your name is
+        # Mihir Gambhire?" straight after he said it sounded like she had not
+        # listened. Confirming is for a name given earlier in the call.
         name = name_the_caller_gave(text, last_reply)
-        # A fuller name replaces a first name, never the other way round.
-        if name and len(name.split()) >= len((self.tools.caller_name or "").split()):
-            self.tools.caller_name = name
         screening = safety.screen(text)
         if screening.level is not safety.Level.ROUTINE:
             self.last_screening = screening
@@ -696,6 +721,10 @@ class SophiaAgent:
             self.messages[-1] = {"role": "assistant", "content": enforced}
 
         record.ends_call = call_is_over(text, record.reply)
+        # A fuller name replaces a first name, never the other way round.
+        if name and len(name.split()) >= len((self.tools.caller_name or "").split()):
+            self.tools.caller_name = name
+        self._note_details_asked_for(record.reply)
         record.latency_seconds = (clock.now() - started).total_seconds()
         self.history.append(record)
         self._compact_history()

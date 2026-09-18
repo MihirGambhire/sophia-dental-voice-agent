@@ -1354,6 +1354,33 @@ and the call ended itself. After a server restart she was still there.
 
 ---
 
+### 43. Cancelling: three questions that should not have been asked
+
+**Symptom.** A tester said "I want to cancel my appointment" and was asked
+whether it was urgent or routine and whether he had been a patient before,
+twice ("ofc, otherwise how would I cancel?"). He gave his name and heard
+"just to confirm, your name is Mihir Gambhire?". Then, before anyone had
+asked for his postcode, "I want to be sure I have your postcode exactly
+right, could you say it again?".
+
+**Causes.** The urgency question in the call stage was written for booking
+and applied to anything to do with an appointment. New or existing was
+only read from explicit phrases, and "cancel my appointment" is as
+explicit as it gets. The name confirmation from entry 41 fired on the same
+turn the name was given. And the grounding check cannot tell a misheard
+postcode from one the model invented before asking, so it always said
+"again".
+
+**Fix.** Cancelling, moving or checking "my appointment", or "I have an
+appointment", marks the caller as existing, and the urgency question is
+for booking only. A name is stored at the end of the turn it was given in,
+so it is confirmed only if it comes up later. The agent records which
+details Sophia has asked for, and the tools say "again" only for those,
+otherwise they simply ask. Replayed as Daniel Okafor: name, date of birth,
+postcode, the cancellation checked and confirmed, goodbye.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns

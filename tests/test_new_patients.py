@@ -557,3 +557,28 @@ def test_a_wrong_appointment_type_lists_the_real_ones(conn):
 
     with pytest.raises(ToolError, match="PRIV_NEW_EXAM"):
         caller(conn).get_fee("PV-EXAM")
+
+
+def test_a_detail_never_asked_for_is_asked_for_not_asked_again(conn):
+    """A tester heard "could you say your postcode again?" before being asked for it."""
+    session = caller(conn)
+    first = register(session, postcode="WA9 9ZZ")
+    assert first["say"] == "Could you tell me your postcode, please?"
+    session.details_asked_for.add("postcode")
+    again = register(session, postcode="WA9 9ZZ")
+    assert "again" in again["say"]
+
+
+@pytest.mark.parametrize(
+    "said, expected",
+    [
+        ("hi I want to cancel my appointment", False),
+        ("I'd like to move my appointment on Tuesday", False),
+        ("I have an appointment booked already, I want to cancel it", False),
+        ("I'd like to book an appointment", None),
+    ],
+)
+def test_someone_with_an_appointment_is_an_existing_patient(said, expected):
+    from sophia.agent_text import said_new_or_existing
+
+    assert said_new_or_existing(said, "How can I help you today?") is expected
