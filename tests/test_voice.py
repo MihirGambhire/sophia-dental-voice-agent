@@ -60,6 +60,7 @@ class FakeAgent:
             tools_used=self._tools,
             safety_level=self._safety,
             latency_seconds=0.4,
+            ends_call=getattr(self, "ends_call", False),
         )
 
 
@@ -849,3 +850,71 @@ def test_an_older_voice_gets_no_speed_it_cannot_use(monkeypatch):
 
     monkeypatch.setattr(voice_app.config, "SPEECH", _speech(tts_voice="aura-athena-en", tts_speed="0.9"))
     assert voice_app.build_tts()._settings.speed is None
+
+
+# ---------------------------------------------------------------------------
+# Hanging up after goodbye
+# ---------------------------------------------------------------------------
+
+
+def _goodbye_processor(monkeypatch):
+    from sophia import voice_app
+    from sophia.web_audio import TypedTextFrame
+
+    monkeypatch.setattr(voice_app, "HANG_UP_DELAY_SECS", 0.01)
+    agent = FakeAgent(reply="Thank you for calling, goodbye.")
+    agent.ends_call = True
+    processor, pushed, events = make_processor(agent)
+    return processor, pushed, events, TypedTextFrame
+
+
+def test_the_call_ends_once_sophia_has_said_goodbye(monkeypatch):
+    """A tester said goodbye and the line stayed open until he pressed hang up."""
+    from pipecat.frames.frames import EndTaskFrame
+
+    processor, pushed, events, Typed = _goodbye_processor(monkeypatch)
+
+    async def call():
+        await feed(processor, Typed(text="no that's all, thanks"))
+        await feed(processor, BotStoppedSpeakingFrame(), FrameDirection.UPSTREAM)
+        await asyncio.sleep(0.05)
+
+    asyncio.run(call())
+    ends = [(f, d) for f, d in pushed if isinstance(f, EndTaskFrame)]
+    assert ends and ends[0][1] is FrameDirection.UPSTREAM
+    assert events[-1]["type"] == "ended"
+
+
+def test_speaking_after_the_goodbye_keeps_the_call_open(monkeypatch):
+    from pipecat.frames.frames import EndTaskFrame
+    from sophia import voice_app
+
+    processor, pushed, _, Typed = _goodbye_processor(monkeypatch)
+    monkeypatch.setattr(voice_app, "HANG_UP_DELAY_SECS", 0.2)
+
+    async def call():
+        await feed(processor, Typed(text="no that's all, thanks"))
+        await feed(processor, BotStoppedSpeakingFrame(), FrameDirection.UPSTREAM)
+        processor.agent.ends_call = False
+        await feed(processor, Typed(text="oh wait, one more thing"))
+        await asyncio.sleep(0.3)
+
+    asyncio.run(call())
+    assert not any(isinstance(f, EndTaskFrame) for f, _ in pushed)
+
+
+def test_an_ordinary_reply_does_not_end_the_call(monkeypatch):
+    from pipecat.frames.frames import EndTaskFrame
+    from sophia import voice_app
+    from sophia.web_audio import TypedTextFrame
+
+    monkeypatch.setattr(voice_app, "HANG_UP_DELAY_SECS", 0.01)
+    processor, pushed, _ = make_processor(FakeAgent(reply="Is there anything else?"))
+
+    async def call():
+        await feed(processor, TypedTextFrame(text="book it please"))
+        await feed(processor, BotStoppedSpeakingFrame(), FrameDirection.UPSTREAM)
+        await asyncio.sleep(0.05)
+
+    asyncio.run(call())
+    assert not any(isinstance(f, EndTaskFrame) for f, _ in pushed)

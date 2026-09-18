@@ -765,3 +765,24 @@ def test_the_call_state_remembers_the_name_the_caller_gave(conn):
     state = agent._state_block()
     assert "already said their name: Mihir Gambhire" in state
     assert "Just to confirm, your name is Mihir Gambhire?" in state
+
+
+@pytest.mark.parametrize(
+    "said, reply, expected",
+    [
+        ("No, that's all, thank you", "Thank you for calling, Mihir. Goodbye.", True),
+        ("nope thanks bye", "Have a lovely day, goodbye!", True),
+        ("no thanks", "No problem. Is there anything else I can help with?", False),
+        ("What time do you close?", "We close at six. Have a lovely day!", False),
+        ("that's all", "Before you go, could I take your phone number?", False),
+    ],
+)
+def test_a_call_is_over_only_when_both_sides_have_finished(said, reply, expected):
+    from sophia.agent_text import call_is_over
+
+    assert call_is_over(said, reply) is expected
+
+
+def test_the_turn_record_says_when_the_call_is_over(conn):
+    agent = agent_with(conn, [text_response("Thank you for calling. Goodbye.")])
+    assert agent.say("No, that's everything, thanks").ends_call is True

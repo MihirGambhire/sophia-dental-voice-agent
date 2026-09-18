@@ -47,6 +47,7 @@ from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
     EndFrame,
+    EndTaskFrame,
     ErrorFrame,
     Frame,
     InterimTranscriptionFrame,
@@ -84,6 +85,10 @@ from .agent_text import SophiaAgent
 # the sentence arrived. People pause mid sentence, especially over dates
 # and postcodes, so this errs long.
 TURN_END_SILENCE_SECS = 1.2
+
+# After Sophia's goodbye stops, how long before the call ends, so the last
+# of her audio still in the browser's buffer is heard.
+HANG_UP_DELAY_SECS = 1.0
 
 FAILURE_REPLY = (
     "I am very sorry, something has gone wrong at my end. "
@@ -188,6 +193,10 @@ class SophiaVoiceProcessor(FrameProcessor):
         self.voice_keys = dict(voice_keys or {})
         self._active_voice = 0
         self._switched_at = float("-inf")
+        # Set when Sophia has said goodbye to a caller who is done: the call
+        # ends once she stops speaking, unless the caller speaks first.
+        self._hang_up_after_speaking = False
+        self._hang_up_task: asyncio.Task | None = None
 
         self._pending: list[str] = []
         self._caller_speaking = False
@@ -236,6 +245,8 @@ class SophiaVoiceProcessor(FrameProcessor):
             self._bot_speaking = True
         elif isinstance(frame, BotStoppedSpeakingFrame):
             self._bot_speaking = False
+            if self._hang_up_after_speaking and self._hang_up_task is None:
+                self._hang_up_task = asyncio.create_task(self._hang_up())
             # Her last words are still travelling: out of the speaker, into
             # the microphone, through the network and speech to text.
             self._echo_until = self._now() + ECHO_TAIL_SECS
@@ -266,6 +277,7 @@ class SophiaVoiceProcessor(FrameProcessor):
                 if self._is_echo(text):
                     logger.debug(f"Ignoring Sophia's own echo: {text!r}")
                     return
+                self._caller_carries_on()
                 if self._bot_speaking and self._is_barge_in(text):
                     await self._interrupt(text)
                 self._pending.append(text)
@@ -300,6 +312,23 @@ class SophiaVoiceProcessor(FrameProcessor):
         if repeat and self._bot_text:
             await self.push_frame(TTSSpeakFrame(self._bot_text))
 
+    async def _hang_up(self) -> None:
+        """End the call a moment after Sophia's goodbye has been heard."""
+        # The browser is still playing the last of the audio it was sent.
+        await asyncio.sleep(HANG_UP_DELAY_SECS)
+        if not self._hang_up_after_speaking:
+            return
+        logger.info("The caller is done and Sophia said goodbye; ending the call")
+        self.on_event({"type": "ended", "text": "Sophia ended the call after saying goodbye."})
+        await self.push_frame(EndTaskFrame(), FrameDirection.UPSTREAM)
+
+    def _caller_carries_on(self) -> None:
+        """The caller spoke after the goodbye, so the call is not over."""
+        self._hang_up_after_speaking = False
+        if self._hang_up_task is not None:
+            self._hang_up_task.cancel()
+            self._hang_up_task = None
+
     async def _typed(self, text: str) -> None:
         """
         The caller typed instead of speaking.
@@ -308,6 +337,7 @@ class SophiaVoiceProcessor(FrameProcessor):
         silence. It stops Sophia if she is talking, as speaking would, and
         anything the caller had just said aloud is answered together with it.
         """
+        self._caller_carries_on()
         if self._bot_speaking:
             await self._interrupt(text)
         self._cancel_flush()
@@ -427,6 +457,7 @@ class SophiaVoiceProcessor(FrameProcessor):
                 }
             )
             self.set_spoken_text(turn.reply)
+            self._hang_up_after_speaking = bool(getattr(turn, "ends_call", False))
             await self.push_frame(TTSSpeakFrame(turn.reply))
 
     async def wait_idle(self) -> None:
@@ -441,6 +472,8 @@ class SophiaVoiceProcessor(FrameProcessor):
 
     async def cleanup(self) -> None:
         self._cancel_flush()
+        if self._hang_up_task is not None:
+            self._hang_up_task.cancel()
         for task in list(self._turn_tasks):
             task.cancel()
         await super().cleanup()
@@ -767,6 +800,18 @@ def create_app() -> FastAPI:
         conn = db.connect(store.database(store.get(session)))
         try:
             return {"patients": demo.patient_cards(conn)}
+        finally:
+            conn.close()
+
+    @app.post("/api/restore-registered")
+    async def restore_registered(body: dict, session: str | None = None):
+        """Put back the patients this tester registered, after a server restart."""
+        store = app.state.sessions
+        conn = db.connect(store.database(store.get(session)))
+        try:
+            patients = body.get("patients") if isinstance(body, dict) else None
+            added = demo.restore_registered(conn, patients if isinstance(patients, list) else [])
+            return {"restored": added}
         finally:
             conn.close()
 

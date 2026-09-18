@@ -473,6 +473,13 @@ function render(events) {
       showError(event.text);
       continue;
     }
+    if (event.type === 'ended') {
+      const note = document.createElement('div');
+      note.className = 'note';
+      note.textContent = event.text;
+      transcriptEl.appendChild(note);
+      continue;
+    }
     if (event.type === 'interrupted') {
       const note = document.createElement('div');
       note.className = 'note';
@@ -521,7 +528,13 @@ async function poll() {
   polling = true;
   try {
     const data = await (await fetch('/api/events?session=' + S + '&after=' + seen)).json();
-    if (data.events.length) { render(data.events); seen = data.total; }
+    if (data.events.length) {
+      render(data.events); seen = data.total;
+      // A registration or booking changes the Patients tab, so show it now
+      // rather than after the call.
+      const changed = ['register_new_patient', 'book_appointment', 'book_urgent_slot', 'cancel_appointment', 'reschedule_appointment'];
+      if (data.events.some(e => (e.tools || []).some(t => changed.includes(t)))) loadDemoPatients();
+    }
   } catch (e) { /* the call matters, the transcript panel does not */ }
   finally { polling = false; }
 }
@@ -636,6 +649,7 @@ async function startCall(reminderId) {
   let connected = false;
   try {
     setState('Connecting', 'connecting');
+    await restoreRegistered();
     emptyState(reminderId ? 'Connecting. Sophia will speak first, as if she has rung you.' : 'Connecting to Sophia...', 'ph-phone-call');
     seen = 0;
 
@@ -732,6 +746,7 @@ document.getElementById('reset').onclick = async () => {
   if (ws) { showError('Hang up before resetting the demo data.'); return; }
   try {
     await fetch('/api/reset?session=' + S, { method: 'POST' });
+    try { localStorage.removeItem(REGISTERED_KEY); } catch (e) {}
     showError('');
     emptyState('Demo data reset. Start a call and say hello.', 'ph-arrow-counter-clockwise');
     seen = 0;
@@ -789,10 +804,42 @@ async function loadReminders() {
   }
 }
 
+// Patients this tester registered, kept in the browser. Render's free server
+// forgets everything when it sleeps or redeploys, so they are sent back
+// before the list is shown and before every call.
+const REGISTERED_KEY = 'sophia-registered';
+
+function savedRegistered() {
+  try { return JSON.parse(localStorage.getItem(REGISTERED_KEY) || '[]'); } catch (e) { return []; }
+}
+
+function keepRegistered(patients) {
+  const kept = savedRegistered();
+  for (const p of patients) {
+    if (!p.registered_by_you || !p.dob) continue;
+    if (kept.some(k => k.name.toLowerCase() === p.name.toLowerCase() && k.dob === p.dob)) continue;
+    kept.push({ name: p.name, dob: p.dob, postcode: p.postcode, phone: p.phone });
+  }
+  try { localStorage.setItem(REGISTERED_KEY, JSON.stringify(kept.slice(-20))); } catch (e) {}
+}
+
+async function restoreRegistered() {
+  const patients = savedRegistered();
+  if (!patients.length) return;
+  try {
+    await fetch('/api/restore-registered?session=' + S, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ patients })
+    });
+  } catch (e) { /* the call still works without them */ }
+}
+
 async function loadDemoPatients() {
   const list = document.getElementById('demo-patients');
   try {
     const { patients } = await (await fetch('/api/demo-patients?session=' + S)).json();
+    keepRegistered(patients);
     list.innerHTML = '';
     for (const patient of patients) {
       const row = el('div', 'record');
@@ -863,7 +910,7 @@ async function loadPracticeInfo() {
 }
 
 loadReminders();
-loadDemoPatients();
+restoreRegistered().then(loadDemoPatients);
 loadPracticeInfo();
 </script>
 </body>

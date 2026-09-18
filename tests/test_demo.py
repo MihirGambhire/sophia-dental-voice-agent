@@ -9,6 +9,8 @@ receptionist follows lived only in the prompt.
 from datetime import date, time
 from types import SimpleNamespace
 
+import pytest
+
 from sophia import clock, demo
 from sophia.agent_text import SophiaAgent
 from sophia.tools import SophiaTools
@@ -103,3 +105,35 @@ def test_the_practice_panel_shows_the_facts_sophia_works_from(conn):
     assert nhs["NHS examination and diagnosis"] == "£27.90"
     assert private["New patient examination"] == "£85"
     assert any("waiting list is paused" in rule for rule in card["rules"])
+
+
+# ---------------------------------------------------------------------------
+# Registered patients put back after a server restart
+# ---------------------------------------------------------------------------
+
+
+def test_registered_patients_come_back_after_the_server_forgets_them(conn):
+    """Render's free plan wipes the server when it sleeps; a tester's new patient vanished."""
+    from sophia import demo
+
+    kept = [{"name": "Mihir Gambhire", "dob": "2003-04-13", "postcode": "411027", "phone": "07700900123"}]
+    assert demo.restore_registered(conn, kept) == 1
+    assert demo.restore_registered(conn, kept) == 0  # already there
+    cards = [c for c in demo.patient_cards(conn) if c["registered_by_you"]]
+    assert [c["name"] for c in cards] == ["Mihir Gambhire"]
+    assert cards[0]["dob"] == "2003-04-13"
+
+
+@pytest.mark.parametrize(
+    "patient",
+    [
+        {"name": "Robert'); DROP TABLE patients;--", "dob": "2003-04-13", "postcode": "411027", "phone": "07700900123"},
+        {"name": "Mihir Gambhire", "dob": "13 April", "postcode": "411027", "phone": "07700900123"},
+        {"name": "Mihir Gambhire", "dob": "2003-04-13", "postcode": "x" * 40, "phone": "07700900123"},
+        "not a patient",
+    ],
+)
+def test_anything_not_shaped_like_a_registration_is_skipped(conn, patient):
+    from sophia import demo
+
+    assert demo.restore_registered(conn, [patient]) == 0

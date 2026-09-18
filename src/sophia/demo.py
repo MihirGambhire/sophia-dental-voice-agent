@@ -16,6 +16,8 @@ every record is invented, and each tester sees their own copy of the data.
 
 from __future__ import annotations
 
+import re
+import uuid
 from datetime import datetime
 
 from . import clock
@@ -63,6 +65,8 @@ def patient_cards(conn, now: datetime | None = None) -> list[dict]:
                 "born": _spoken_birth_date(row["dob"]),
                 "postcode": row["postcode"],
                 "phone": row["phone"] if registered else None,
+                # Kept by the browser, to put back after a server restart.
+                "dob": row["dob"] if registered else None,
                 "try": REGISTERED if registered else TRY[row["code"]],
                 "next_appointment": (
                     clock.spoken_datetime(clock.from_db(upcoming["start_time"])) if upcoming else None
@@ -136,3 +140,52 @@ def practice_card(conn) -> dict:
             "priced here. Asked about them, Sophia should take a message rather than give a figure."
         ),
     }
+
+
+# How many registered patients a browser may put back, and the shapes they
+# must have. Each tester's database is their own copy, so this only ever
+# restores fake data into the tester's own sandbox.
+MAX_RESTORED = 20
+_RESTORE_NAME = re.compile(r"^[A-Za-z][A-Za-z '\-]{1,79}$")
+_RESTORE_POSTCODE = re.compile(r"^[A-Za-z0-9 ]{2,10}$")
+_RESTORE_PHONE = re.compile(r"^[0-9+ ]{6,20}$")
+
+
+def restore_registered(conn, patients: list[dict]) -> int:
+    """
+    Put back patients a tester registered, after the server lost them.
+
+    Render's free plan wipes the server's files whenever it sleeps, after
+    fifteen idle minutes, and on every deploy. A tester who registered and
+    came back later found themselves gone. The browser keeps a copy of what
+    it was shown and sends it back; anything already there, or not in the
+    shape a registration produces, is skipped. Returns how many were added.
+    """
+    added = 0
+    for patient in patients[:MAX_RESTORED]:
+        if not isinstance(patient, dict):
+            continue
+        name = str(patient.get("name") or "").strip()
+        dob = str(patient.get("dob") or "").strip()
+        postcode = str(patient.get("postcode") or "").strip()
+        phone = str(patient.get("phone") or "").strip()
+        try:
+            datetime.strptime(dob, clock.DB_DATE_FORMAT)
+        except ValueError:
+            continue
+        if not (_RESTORE_NAME.match(name) and _RESTORE_POSTCODE.match(postcode) and _RESTORE_PHONE.match(phone)):
+            continue
+        exists = conn.execute(
+            "SELECT 1 FROM patients WHERE lower(full_name) = lower(?) AND dob = ?", (name, dob)
+        ).fetchone()
+        if exists:
+            continue
+        conn.execute(
+            "INSERT INTO patients (code, full_name, dob, postcode, phone, patient_type, notes) "
+            "VALUES (?, ?, ?, ?, ?, 'private', ?)",
+            (f"new-{uuid.uuid4().hex[:10]}", name, dob, postcode, phone,
+             "Registered by phone with Sophia on an earlier call. Not yet seen."),
+        )
+        added += 1
+    conn.commit()
+    return added

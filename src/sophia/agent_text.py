@@ -149,6 +149,9 @@ class TurnRecord:
     # Which models answered this turn, as "provider:model", when the client
     # can fall back between several. Empty for a single fixed model.
     models: list[str] = field(default_factory=list)
+    # True when the caller has finished and Sophia has said goodbye, so the
+    # voice layer hangs up once she has finished speaking.
+    ends_call: bool = False
 
     @property
     def tools_used(self) -> list[str]:
@@ -239,6 +242,29 @@ def name_the_caller_gave(said: str, last_reply: str) -> str | None:
     if not words:
         return None
     return " ".join(w[:1].upper() + w[1:].lower() for w in words)
+
+
+# The end of a call. A tester said goodbye and the line stayed open until he
+# pressed hang up. Both halves are needed: the caller saying they are done,
+# and Sophia saying goodbye. "No thanks" to "shall I book that?" is not the
+# end of a call, and Sophia saying "have a lovely day" to a caller who is
+# still asking something must not cut them off.
+_CALLER_DONE = re.compile(
+    r"\b(?:that'?s (?:all|it|everything)|that is (?:all|it)|nothing else|no(?:pe)?,? thank(?:s| you)"
+    r"|no(?:pe)?,? i'?m (?:good|fine|ok(?:ay)?)|i'?m all (?:good|set)|all good|no more"
+    r"|(?:good)?bye|cheers|that will be all|that'?ll be all|i'?m done)\b",
+    re.IGNORECASE,
+)
+_SOPHIA_FAREWELL = re.compile(
+    r"\b(?:goodbye|bye(?: now| for now)?|have a (?:lovely|good|great|nice|wonderful) "
+    r"(?:day|afternoon|evening|morning|weekend)|take care)\b",
+    re.IGNORECASE,
+)
+
+
+def call_is_over(said: str, reply: str) -> bool:
+    """True when the caller is done and Sophia has said goodbye."""
+    return bool(_CALLER_DONE.search(said or "") and _SOPHIA_FAREWELL.search(reply or ""))
 
 
 def said_new_or_existing(said: str, last_reply: str) -> bool | None:
@@ -669,6 +695,7 @@ class SophiaAgent:
             record.reply = enforced
             self.messages[-1] = {"role": "assistant", "content": enforced}
 
+        record.ends_call = call_is_over(text, record.reply)
         record.latency_seconds = (clock.now() - started).total_seconds()
         self.history.append(record)
         self._compact_history()
