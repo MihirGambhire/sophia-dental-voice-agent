@@ -1122,3 +1122,13 @@ def test_confirming_the_same_patient_again_is_fine(conn):
     session, row = verified(conn, "hollis")
     again = session.verify_patient(row["full_name"], row["dob"], row["postcode"])
     assert again["verified"] is True
+
+
+def test_a_first_name_alone_is_asked_to_be_completed_before_any_lookup(conn):
+    """"This is Margaret speaking", right date of birth and postcode, told no record matched."""
+    session = at(conn, a_weekday_at(10))
+    result = session.verify_patient("Margaret", "1958-03-12", "WA1 2NF")
+    assert result["reason"] == "missing_details"
+    assert result["say"] == "Could I take your surname as well, Margaret?"
+    # And the same for a name nobody has: the answer reveals nothing.
+    assert session.verify_patient("Zelda", "1958-03-12", "WA1 2NF")["reason"] == "missing_details"

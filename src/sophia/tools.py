@@ -580,6 +580,19 @@ class SophiaTools:
                 "say": self._ask_for(missing),
             }
 
+        # A tester said "this is Margaret speaking", gave the right date of
+        # birth and postcode, and was told no record matched: nobody asked
+        # for her surname. A first name alone is asked to be completed
+        # before any lookup, so the answer says nothing about the records.
+        if len(_clean_name(full_name).split()) < 2:
+            first = _clean_name(full_name).strip().title()
+            return {
+                "verified": False,
+                "reason": "missing_details",
+                "missing": ["surname"],
+                "say": f"Could I take your surname as well{', ' + first if first else ''}?",
+            }
+
         normalised_dob = _normalise_dob(dob)
         if normalised_dob is None:
             return {
@@ -739,7 +752,10 @@ class SophiaTools:
         """
         if "full name" in missing and self.caller_name:
             rest = [label for label in missing if label != "full name"]
-            ask = f"Just to confirm, your name is {self.caller_name}?"
+            if len(self.caller_name.split()) < 2:
+                ask = f"Could I take your surname as well, {self.caller_name}?"
+            else:
+                ask = f"Just to confirm, your name is {self.caller_name}?"
             if rest:
                 ask += f" And could you tell me your {' and '.join(rest)}, please?"
             return ask

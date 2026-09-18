@@ -576,6 +576,9 @@ def test_a_detail_never_asked_for_is_asked_for_not_asked_again(conn):
         ("I'd like to move my appointment on Tuesday", False),
         ("I have an appointment booked already, I want to cancel it", False),
         ("I'd like to book an appointment", None),
+        ("hi, I wanted to know if there are any appoinments booked in my name", False),
+        ("are there any appointments booked in my name?", False),
+        ("do I have an appointment this week?", False),
     ],
 )
 def test_someone_with_an_appointment_is_an_existing_patient(said, expected):

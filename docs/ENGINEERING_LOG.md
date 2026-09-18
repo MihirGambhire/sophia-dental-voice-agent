@@ -1381,6 +1381,29 @@ postcode, the cancellation checked and confirmed, goodbye.
 
 ---
 
+### 44. "This is Margaret speaking", and "will a real person answer?"
+
+**Symptom, two calls.** A tester called as a demo patient with "this is
+Margaret speaking", gave the right date of birth and postcode, and was told
+no record matched: nobody had asked for her surname. On another call,
+"are there any appointments booked in my name?" was answered with "have
+you been a patient before?". Asked whether a real person would answer the
+reception line, Sophia said one would, which is in no document she has.
+
+**Fix.** `verify_patient` treats a first name alone as a missing detail
+and asks "Could I take your surname as well, Margaret?" before any lookup,
+for any name at all, so the answer says nothing about the records. Asking
+about appointments in "my name", "do I have an appointment" and "when is my
+appointment" now mark the caller as existing, allowing for "appoinments"
+typed in a hurry. Who answers the phone and how to reach a dentist are now
+in the practice information: Sophia cannot say who will answer, has no
+direct numbers for staff, and takes a message for the team. Claiming that
+a real person or the team will answer now counts as a practice fact, so it
+must be looked up first. Replies no longer start with stray punctuation,
+after one began ". Our reception staff".
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns

@@ -97,6 +97,10 @@ _CLAIMS_PRACTICE_FACT = re.compile(
     r"\bwe (?:do |also |don't |do not |can't |cannot |can )?(?:offer|provide|accept)\b"
     r"|\bwe(?: are|'re) (?:an? |only )?(?:nhs|private|mixed)\b"
     r"|\bour (?:address|phone number|email|website) (?:is|are)\b"
+    # "A real person from our reception team answers the phone", said with
+    # nothing behind it, to a caller asking whether a human would answer.
+    r"|\breal person (?:from|on|in|at|will|would)\b"
+    r"|\b(?:someone|a member of (?:the |our )?team|our (?:reception|team)) (?:will|would) (?:answer|pick up)\b"
 )
 _CHECKS_PRACTICE_FACT = {"search_practice_info", "get_fee", "recommend_appointment_type"}
 
@@ -118,7 +122,10 @@ def plain_text(value: str) -> str:
     # Stage directions a model sometimes writes, which a voice reads aloud:
     # a backup model ended a reply with "(Waiting for response)".
     value = _STAGE_DIRECTIONS.sub("", value)
-    return re.sub(r"[ 	]{2,}", " ", value).strip()
+    value = re.sub(r"[ 	]{2,}", " ", value).strip()
+    # A reply once began ". Our reception staff...", from an empty first
+    # part the model sent before the real one. Spoken, it is a stray pause.
+    return re.sub(r"^[\s.,;:]+", "", value)
 
 
 _STAGE_DIRECTIONS = re.compile(
@@ -193,7 +200,12 @@ _SAYS_EXISTING = re.compile(
     # it was urgent and whether he had been a patient before. Only someone
     # already on file has an appointment to cancel, move or check.
     r"|\b(?:cancel|reschedule|move|change|rearrange|check|confirm)\b[^.?!]{0,25}\bmy\b[^.?!]{0,15}\bappointment"
-    r"|\bi (?:have|'?ve got|already have) (?:an|a) (?:appointment|booking)\b",
+    r"|\bi (?:have|'?ve got|already have) (?:an|a) (?:appointment|booking)\b"
+    # "Are there any appointments booked in my name?"
+    # Typed in a hurry as "appoinments", so the t is optional.
+    r"|\bappoint?ments?\b[^.?!]{0,20}\b(?:in|under) my name\b"
+    r"|\b(?:do|have) i (?:got |have )?(?:an|any) appoint?ments?\b"
+    r"|\bwhen(?:'s| is) my (?:next )?appointment\b",
     re.IGNORECASE,
 )
 

@@ -804,3 +804,26 @@ def test_the_details_sophia_asked_for_are_remembered(conn):
     agent = agent_with(conn, [text_response("Could you tell me your date of birth and postcode?")])
     agent.say("I want to cancel my appointment")
     assert agent.tools.details_asked_for == {"date of birth", "postcode"}
+
+
+def test_saying_a_real_person_will_answer_must_be_looked_up():
+    """Sophia told a caller "a real person from our reception team answers", from nothing."""
+    from sophia.agent_text import _CLAIMS_PRACTICE_FACT
+
+    assert _CLAIMS_PRACTICE_FACT.search("a real person from our reception team answers the phone")
+    assert _CLAIMS_PRACTICE_FACT.search("someone will answer during opening hours")
+    assert not _CLAIMS_PRACTICE_FACT.search("No, I'm not a real person, I'm the practice's AI assistant.")
+
+
+def test_who_answers_the_phone_is_in_the_practice_information():
+    from sophia import knowledge
+
+    found = knowledge.answer("is there gonna be a real person or AI if I call reception?")
+    assert found["found"]
+    assert any("real person" in extract["text"] for extract in found["extracts"])
+
+
+def test_a_reply_does_not_start_with_stray_punctuation():
+    from sophia.agent_text import plain_text
+
+    assert plain_text(". Our reception staff answer the phone.") == "Our reception staff answer the phone."
