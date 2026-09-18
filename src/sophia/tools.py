@@ -925,7 +925,27 @@ class SophiaTools:
         same_birthday = self.conn.execute(
             f"SELECT * FROM patients WHERE dob IN ({', '.join('?' for _ in readings)})", readings
         ).fetchall()
-        if any(_name_similarity(full_name, row["full_name"]) >= _NAME_SIMILARITY for row in same_birthday):
+        same_person = [row for row in same_birthday if _name_similarity(full_name, row["full_name"]) >= _NAME_SIMILARITY]
+        # A tester who had registered on an earlier call said "nope" to
+        # "been here before?", gave the same details, and was offered a
+        # message. Name, date of birth and postcode all matching one record
+        # is exactly the identity check an existing patient passes, so they
+        # are found rather than turned away. Anything less stays refused.
+        at_address = [
+            row for row in same_person
+            if _normalise_postcode(row["postcode"]).upper() == spoken_postcode
+        ]
+        if len(at_address) == 1 and self.expected_patient_id is None:
+            match = at_address[0]
+            self.verified_patient_id = match["id"]
+            self.verified_name = match["full_name"]
+            self.caller_said_new = False
+            first = match["full_name"].split()[0]
+            return {"registered": False, "reason": "already_registered", "verified": True,
+                    "patient_id": match["id"], "first_name": first,
+                    "say": f"It looks like you are already registered with us, {first}, so I have found your record.",
+                    **self._carry_on()}
+        if same_person:
             return {"registered": False, "reason": "cannot_register",
                     "say": ("I am not able to set up a new record with those details over the phone. "
                             "Let me take a message, and the team will call you back to sort it out.")}

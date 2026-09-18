@@ -585,3 +585,22 @@ def test_someone_with_an_appointment_is_an_existing_patient(said, expected):
     from sophia.agent_text import said_new_or_existing
 
     assert said_new_or_existing(said, "How can I help you today?") is expected
+
+
+def test_registering_again_with_the_same_details_finds_the_record(conn):
+    """A tester registered earlier, said "nope" to being a patient, and was offered a message."""
+    register(caller(conn))
+    again = caller(conn)
+    again.caller_said_new = True
+    result = register(again)
+    assert result["reason"] == "already_registered" and result["verified"] is True
+    assert again.verified_patient_id == result["patient_id"]
+    assert again.caller_said_new is False
+    assert conn.execute("SELECT COUNT(*) FROM patients WHERE full_name = 'Priya Sharma'").fetchone()[0] == 1
+
+
+def test_the_same_name_and_birthday_at_another_postcode_is_still_refused(conn):
+    register(caller(conn))
+    said = [*NEW_CALLER[:3], "W A 9, 9 Z Z", NEW_CALLER[4]]
+    result = register(caller(conn, said=said), postcode="WA9 9ZZ")
+    assert result["reason"] == "cannot_register"

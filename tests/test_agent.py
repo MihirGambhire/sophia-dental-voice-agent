@@ -862,3 +862,18 @@ def test_a_guessed_call_back_habit_is_replaced_with_what_is_known():
     assert "usually" not in fixed
     assert CALL_BACK_ANSWER in fixed and fixed.endswith("Is there anything else I can help with?")
     assert replace_call_back_guess("I have taken that down, and they will call you back.") is None
+
+
+@pytest.mark.parametrize(
+    "reply, expected",
+    [
+        ("I have taken that down for the team, Mihir. Thank you for calling, have a lovely day. Goodbye.", True),
+        ("Before we say goodbye, could I take your phone number?", False),
+        ("Thank you for calling. Bye for now!", True),
+    ],
+)
+def test_sophia_saying_goodbye_ends_the_call_on_its_own(reply, expected):
+    """She said goodbye after taking his number, and the line stayed open."""
+    from sophia.agent_text import call_is_over
+
+    assert call_is_over("9307799220", reply) is expected

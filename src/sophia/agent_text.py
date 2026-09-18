@@ -334,14 +334,22 @@ def replace_call_back_guess(reply: str) -> str | None:
 
 
 def call_is_over(said: str, reply: str, last_reply: str = "") -> bool:
-    """True when the caller is done and Sophia has said goodbye."""
-    # A short "no" also counts when Sophia answers it with an outright
-    # goodbye: she has judged the call over, and the line should agree.
+    """True when the caller is done and Sophia has said goodbye, or she has ended it."""
+    # An outright "goodbye" closing her reply ends the call on its own. A
+    # tester gave his number for a message, Sophia thanked him and said
+    # "Goodbye", and the line stayed open because he had not said he was
+    # done. Once she has said goodbye, an open line only confuses.
+    if _ENDS_WITH_GOODBYE.search((reply or "").strip()):
+        return True
     done = bool(_CALLER_DONE.search(said or "")) or bool(
-        _SHORT_DONE.match(said or "")
-        and (_ASKED_ANYTHING_ELSE.search(last_reply or "") or re.search(r"\bgoodbye\b", reply or "", re.IGNORECASE))
+        _SHORT_DONE.match(said or "") and _ASKED_ANYTHING_ELSE.search(last_reply or "")
     )
     return done and bool(_SOPHIA_FAREWELL.search(reply or ""))
+
+
+# "Goodbye" in the last sentence, which is not a question. "Before we say
+# goodbye, could I take your number?" does not end a call.
+_ENDS_WITH_GOODBYE = re.compile(r"\b(?:goodbye|bye(?: now| for now)?)\b[^.?!]*[.!]?\s*$", re.IGNORECASE)
 
 
 def said_new_or_existing(said: str, last_reply: str) -> bool | None:

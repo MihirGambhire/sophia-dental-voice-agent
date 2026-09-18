@@ -1428,6 +1428,26 @@ answer about missed calls, and the call ended on "no".
 
 ---
 
+### 46. Registering twice, and a goodbye nobody asked for
+
+**Symptom.** A tester who had registered on an earlier call said "nope" to
+"been here before?", gave the same name, date of birth and postcode, and
+was told a new record could not be set up, then offered a message. After
+taking his number Sophia said "Goodbye" of her own accord, and the line
+stayed open because he had not said he was done.
+
+**Fix.** Registration still refuses a duplicate, but when name, date of
+birth and postcode all match one record, that is the same check an
+existing patient passes, so the caller is verified as that patient and the
+call carries on. The same name and birthday at another postcode is still
+refused, since that is not enough to be sure who is calling. And a reply
+that ends with an outright "goodbye" now ends the call on its own, because
+an open line after Sophia has said goodbye only confuses. "Before we say
+goodbye, could I take your number?" does not count. Replayed with him
+already on file: found, and straight on to booking.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns
