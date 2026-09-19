@@ -161,6 +161,31 @@ def _mark_cartesia_out_of_credit(key: str) -> None:
     _cartesia_resting_until[key] = time.monotonic() + VOICE_OUT_OF_CREDIT_REST_SECS
 
 
+# Words speech to text should expect on this call. A tester said "you are
+# speaking to Joan" and it heard "Jones"; "Eileen" came through as
+# "Aileen". Deepgram's Nova-3 takes up to 500 tokens of keyterms and
+# advises the few dozen that matter most: here the practice's own words and
+# every name the call could involve, read from this tester's own data so a
+# patient they registered is included.
+PRACTICE_KEYTERMS = ("Sophia", "Museum Street", "Warrington", "NHS", "postcode", "hygienist", "check up")
+MAX_KEYTERMS = 60
+
+
+def listening_for(conn) -> list[str]:
+    """The keyterms for one call: practice words, then patient and clinician names."""
+    terms: list[str] = list(PRACTICE_KEYTERMS)
+    for query in ("SELECT name FROM clinicians ORDER BY id", "SELECT full_name FROM patients ORDER BY id"):
+        try:
+            names = [row[0] for row in conn.execute(query).fetchall()]
+        except Exception:  # noqa: BLE001, a missing table must not stop a call
+            names = []
+        for name in names:
+            name = re.sub(r"^(?:Dr|Mr|Mrs|Ms|Miss)\.?\s+", "", (name or "").strip())
+            if name and name not in terms:
+                terms.append(name)
+    return terms[:MAX_KEYTERMS]
+
+
 def _words(text: str) -> list[str]:
     return re.findall(r"[a-z0-9']+", (text or "").lower())
 
@@ -573,6 +598,7 @@ def build_pipeline(
             smart_format=True,
             punctuate=True,
             interim_results=True,
+            keyterm=listening_for(conn),
         ),
         # The caller's audio stops here. Nothing after speech to text uses
         # it, and passing 50 frames a second on through Sophia and every

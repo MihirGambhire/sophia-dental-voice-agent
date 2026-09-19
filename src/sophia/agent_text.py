@@ -390,6 +390,8 @@ def wants_to_be_seen_today(said: str, last_reply: str) -> bool:
 # A caller actually asking about ringing or the out of hours help, when it
 # may be said again. "My phone number is ..." is not one: a first version
 # matched "number" there and let the whole advice through a second time.
+_ANYTHING_ELSE = re.compile(r"\banything else\b[^.?!]*\?|\bis there more I can\b", re.IGNORECASE)
+
 _ASKS_ABOUT_ADVICE = re.compile(
     r"\bwhat(?:'s| is) (?:the|that) number\b|\bwhich number\b|\bwhen (?:can|should|do|could) i (?:ring|call)\b"
     r"|\bwhat time (?:can|should|do|could) i\b|\bout[- ]of[- ]hours\b|\b111\b"
@@ -991,6 +993,17 @@ class SophiaAgent:
         if not (record.reply or "").strip():
             record.reply = "Sorry, could you say that again?"
             self.messages[-1] = {"role": "assistant", "content": record.reply}
+        # "Is there anything else I can help you with?" once, not after
+        # every reply. A tester, asked it four times running, said "why do
+        # you keep asking is there anything else? Why can't you just talk?"
+        if _ANYTHING_ELSE.search(last_reply or "") and _ANYTHING_ELSE.search(record.reply or ""):
+            rest = " ".join(
+                s.strip() for s in re.findall(r"[^.?!]+[.?!]*", record.reply)
+                if s.strip() and not _ANYTHING_ELSE.search(s)
+            )
+            if rest:
+                record.reply = rest
+                self.messages[-1] = {"role": "assistant", "content": record.reply}
         # Decided on the words actually spoken: a goodbye replaced by a
         # booking or an offer must not hang up on the caller.
         record.ends_call = call_is_over(text, record.reply, last_reply)

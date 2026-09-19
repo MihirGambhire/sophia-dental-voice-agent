@@ -919,3 +919,14 @@ def test_an_ordinary_reply_does_not_end_the_call(monkeypatch):
 
     asyncio.run(call())
     assert not any(isinstance(f, EndTaskFrame) for f, _ in pushed)
+
+
+
+def test_speech_to_text_listens_for_the_names_on_file(conn):
+    """"Joan" was heard as "Jones" and "Eileen" as "Aileen"."""
+    from sophia import voice_app
+
+    terms = voice_app.listening_for(conn)
+    assert "Joan Fairbanks" in terms and "Eileen Ashworth" in terms
+    assert "Museum Street" in terms and len(terms) <= voice_app.MAX_KEYTERMS
+    assert not any(term.startswith("Dr ") for term in terms)

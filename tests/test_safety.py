@@ -437,3 +437,29 @@ def test_the_rule_is_applied_by_the_agent_before_the_caller_hears_it(conn):
     assert "400" not in turn.reply
     assert "pharmacist" in turn.reply
     assert agent.messages[-1]["content"] == turn.reply
+
+
+
+@pytest.mark.parametrize("said", [
+    "Why can't you just talk? Is it difficult to just, I mean, why are you in such a hurry?",
+    "you can't talk to me like that",
+    "I can't talk right now, I'm at work",
+    "sorry I can't speak for long",
+])
+def test_talking_that_is_not_an_airway_problem_is_not_999(said):
+    """"Why can't you just talk?", said to Sophia in annoyance, was sent to 999."""
+    from sophia import safety
+
+    assert safety.screen(said).level is not safety.Level.EMERGENCY
+
+
+@pytest.mark.parametrize("said", [
+    "I can't really breathe very well",
+    "I can't speak properly, my tongue is swollen",
+    "it's hard to talk, my throat feels tight",
+    "I can't talk, my face is swollen and I can't breathe",
+])
+def test_real_airway_problems_are_still_999(said):
+    from sophia import safety
+
+    assert safety.screen(said).level is safety.Level.EMERGENCY

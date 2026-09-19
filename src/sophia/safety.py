@@ -92,10 +92,19 @@ _STRUGGLE = (
     r"can'?t|cannot|couldn'?t|could not|hard to|difficult to|difficulty|"
     r"struggling to|struggle to|trouble|unable to|barely"
 )
-_AIRWAY = r"breathe|breathing|breath|swallow|swallowing|speak|speaking|talk"
+# Speaking or talking counts unless it is about being busy: "I can't talk
+# right now, I'm at work" is not an airway problem.
+_BUSY = r"(?!\s+(?:right\s+)?now|\s+at\s+the\s+moment|\s+at\s+work|\s+for\s+long)"
+_AIRWAY = rf"breathe|breathing|breath|swallow|swallowing|speak{_BUSY}|speaking{_BUSY}|talk{_BUSY}"
+
+# A tester, annoyed with Sophia, said "why can't you just talk?" and was
+# told to ring 999. A struggle aimed at her, "can't you" or "you can't",
+# is not the caller's airway. Anything the caller says of themselves still
+# counts, however it is worded.
+_NOT_ABOUT_SOPHIA = r"(?<!\byou )(?:{struggle})(?!\s+you\b)"
 
 BREATHING = (
-    rf"({_STRUGGLE})\s+(\w+\s+){{0,3}}({_AIRWAY})|"
+    rf"{_NOT_ABOUT_SOPHIA.format(struggle=_STRUGGLE)}\s+(\w+\s+){{0,3}}({_AIRWAY})|"
     r"can'?t catch my breath|short of breath|gasping|"
     r"closing (up|over)|throat.*clos|airway"
 )

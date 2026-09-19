@@ -231,6 +231,16 @@ _NUMBER_WORDS = {
 }
 
 
+# Letter names as speech to text writes them when a postcode is spelled
+# out: "W A five, one dee jay". Only names that are not everyday words, so
+# "you", "are" and "why" are left alone.
+_LETTER_WORDS = {
+    "bee": "B", "cee": "C", "dee": "D", "gee": "G", "jay": "J", "kay": "K", "pee": "P",
+    "tee": "T", "vee": "V", "zed": "Z", "zee": "Z", "aitch": "H", "haitch": "H", "ess": "S",
+    "ell": "L", "em": "M", "en": "N", "ex": "X", "cue": "Q", "queue": "Q",
+}
+
+
 def _spoken_characters(utterances: list[str]) -> str:
     """
     Everything the caller said, reduced to the characters a postcode uses.
@@ -239,7 +249,7 @@ def _spoken_characters(utterances: list[str]) -> str:
     letter or digit by word can be found in it.
     """
     words = re.findall(r"[a-z0-9]+", " ".join(utterances).lower())
-    return "".join(_NUMBER_WORDS.get(word, word) for word in words).upper()
+    return "".join(_NUMBER_WORDS.get(word, _LETTER_WORDS.get(word, word)) for word in words).upper()
 
 
 def _postcode_was_said(postcode: str, utterances: list[str]) -> bool:

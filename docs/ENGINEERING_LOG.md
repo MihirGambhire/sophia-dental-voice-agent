@@ -1588,6 +1588,28 @@ Replayed: "Jones" is asked about, and the call goes on to the reminder.
 
 ---
 
+### 51. "Why can't you just talk?"
+
+Two calls on Render. In the first, a tester annoyed at a slow reply said
+"why can't you just talk?" and was told to ring 999: the airway rule read
+"can't ... talk" as the caller unable to speak. The rule now ignores a
+struggle aimed at Sophia ("can't you", "you can't") and busy phrases
+("can't talk right now", "at work", "for long"). Real airway phrases,
+"I can't speak properly, my tongue is swollen", are still 999, and both
+sides have tests.
+
+In the second, Sophia asked "anything else?" twice in a row. Code now
+drops the question when her previous reply already asked it.
+
+The tester also said she sometimes does not catch what they say. Deepgram
+Nova-3 accepts keyterms, so each call now passes the practice's own words
+plus every clinician and patient name in that tester's data, a patient
+they registered included, up to 60 terms. A postcode spelled with letter
+names, "one dee jay", now grounds as 1DJ. Language stays en-GB for now;
+en-IN is the next lever if an Indian English accent is still misheard.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns

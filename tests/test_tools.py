@@ -1289,3 +1289,10 @@ def test_a_preferred_call_back_time_is_noted_not_promised(conn):
     session.caller_heard = ["call me anything between one to 5PM", "it's 9307799220"]
     result = session.take_message("Mihir Gambhire", "Question about gum treatment", "9307799220")
     assert "can't promise exactly when" in result["say"]
+
+
+
+def test_a_postcode_spelled_with_letter_names_is_heard(conn):
+    from sophia.tools import _postcode_was_said
+
+    assert _postcode_was_said("WA5 1DJ", ["W A five, one dee jay"])

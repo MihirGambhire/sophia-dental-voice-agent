@@ -1168,3 +1168,13 @@ def test_a_yes_with_a_but_is_not_taken_as_booking():
     assert _YES_TO_OFFER.search("yes please")
     assert not _YES_TO_OFFER.search("yes but do you have something in the afternoon?")
     assert not _YES_TO_OFFER.search("no thanks")
+
+
+def test_anything_else_is_not_asked_twice_in_a_row(conn):
+    """"Why do you keep asking is there anything else?"."""
+    agent = agent_with(conn, [
+        text_response("That is noted. Is there anything else I can help you with today?"),
+        text_response("I'm doing well, thank you for asking. Is there anything else I can help you with today?"),
+    ])
+    agent.say("please pass that on")
+    assert agent.say("how are you?").reply == "I'm doing well, thank you for asking."
