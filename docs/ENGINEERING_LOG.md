@@ -1544,6 +1544,30 @@ code adds it: before the closing question, or first when the reply is
 asking the caller to repeat something. Once given, the urgent lookup no
 longer returns it, after a replay read it out a second time.
 
+**A third call, "really not great".** He asked for the earliest appointment
+in his first sentence, gave every detail in his second, heard the urgent
+advice again in the model's own words, and was offered a message; he had
+to ask for the booking twice. Replays found more: an emergency
+consultation booked three days ahead as if it were a check up; a turn
+that needed verify, the urgent check, the type and the slot search
+running out of rounds ("I am having trouble with that"); and once, the
+model's own working printed as the reply, tool names and all, which a
+voice would have read out.
+
+Telling the model was not enough, replay after replay, so the code now
+does it. The caller's request to book is read from their words and, once
+they are identified, if nothing has been offered, the code looks up the
+earliest routine slot by the same rules as the tools and offers it; a yes
+to that offer is booked even if the model answers it with something else.
+A repeat of the urgent advice is removed unless the caller asked about it
+("what's the number again?", not "my phone number is"). Urgent types can
+no longer be searched or booked ahead: they come only from the day's
+urgent slots. Rounds went from 6 to 8. A reply containing the model's
+notes is sent back once and never spoken. Every hang up decision is now
+made on the words finally spoken, so a goodbye replaced by a booking does
+not end the call. Replayed three times: advice once, the earliest slot
+offered straight after identity, booked on yes.
+
 ---
 
 ## Patterns worth keeping

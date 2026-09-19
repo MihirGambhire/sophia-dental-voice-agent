@@ -473,6 +473,13 @@ class SophiaTools:
         # True once today's urgent appointments have been looked up: the
         # caller asked to be seen today, whatever words they used for why.
         self.urgent_requested = False
+        # True once the caller has asked to book, read from their words by
+        # the agent, so the request survives the identity questions.
+        self.booking_requested = False
+        # Whether the reply was already sent back once to offer that booking.
+        self.booking_nudged = False
+        # The slot the code itself offered, so a yes to it can be kept.
+        self.code_offer: dict | None = None
         # True once the caller has said they are new to the practice, False
         # once they have said they have been before, None until either.
         # Set by the agent from the caller's own words.
@@ -782,6 +789,28 @@ class SophiaTools:
             letters = ", letter by letter" if label == "postcode" else ""
             return f"Sorry, I want to be sure I have your {label} exactly right. Could you say it again{letters}?"
         return f"Could you tell me your {label}, please?"
+
+    def _urgent_only_on_the_day(self) -> dict:
+        """
+        Why an urgent appointment type cannot be searched or booked like a routine one.
+
+        A replay on a Saturday booked an "emergency consultation" for
+        Monday at 8am as if it were a check up. Urgent care comes only from
+        the day's limited urgent appointments, released at 8am, which is
+        the whole point of the 8am release.
+        """
+        if self.urgent_bookable_now():
+            return {"slots": [], "reason": "use_todays_urgent_slots",
+                    "say": "Urgent appointments come from today's urgent slots. Let me check what is left today."}
+        return {
+            "slots": [],
+            "reason": "urgent_only_on_the_day",
+            "for_the_model": "For the earliest routine appointment instead, use recommend_appointment_type with purpose check_up.",
+            "say": (
+                "Urgent appointments can only be booked on the day itself. "
+                + ("" if self.urgent_advice_given else self.urgent_advice())
+            ).strip(),
+        }
 
     def next_urgent_release(self) -> str:
         """
@@ -1133,6 +1162,8 @@ class SophiaTools:
         window_start = _parse_hhmm(after_time)
         window_end = _parse_hhmm(before_time)
         type_row = self._type_row(appointment_type)
+        if type_row["code"] in URGENT_TYPE_CODES:
+            return self._urgent_only_on_the_day()
         if not type_row["is_bookable"]:
             return {
                 "slots": [],
@@ -1354,6 +1385,8 @@ class SophiaTools:
         patient_id = self._require_verified()
         self.waiting_booking = None
         type_row = self._type_row(appointment_type)
+        if type_row["code"] in URGENT_TYPE_CODES:
+            return {"booked": False, **self._urgent_only_on_the_day()}
 
         if not type_row["is_bookable"]:
             raise ToolError(f"{type_row['name']} cannot be booked directly.")
@@ -1917,6 +1950,10 @@ class SophiaTools:
                 else "seen within the last three years"
             ),
         }
+
+
+# Urgent care is booked only from the day's urgent slots, never ahead.
+URGENT_TYPE_CODES = frozenset({"NHS_URGENT", "PRIV_EMERG_NEW", "PRIV_EMERG_EXISTING"})
 
 
 def _spread_within_day(slots: list[Slot], limit: int) -> list[Slot]:

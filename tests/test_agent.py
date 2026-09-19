@@ -998,3 +998,173 @@ def test_advice_goes_first_when_the_reply_asks_for_something_again():
     assert _before_last_question(reply, "Ring at 8am.") == "Ring at 8am. " + reply
     assert _before_last_question("We are closed. Shall I book Monday?", "Ring at 8am.") == \
         "We are closed. Ring at 8am. Shall I book Monday?"
+
+
+
+def test_the_urgent_advice_is_not_repeated_in_the_models_own_words(conn):
+    """A tester heard the whole advice twice in a row."""
+    from datetime import datetime as _dt
+
+    saturday = clock.to_aware(_dt(2026, 9, 19, 11, 0))
+    agent = agent_with(conn, [
+        text_response("Have you been a patient here before?"),
+        tool_response([("get_urgent_slots_today", {})]),
+        text_response("Mihir, since the practice is closed right now, there are no urgent slots available to book today. "
+                      "You can call back on Monday morning from eight o'clock, or contact the out-of-hours dental "
+                      "service on 0161 476 9651. Shall I find you the earliest routine appointment?"),
+    ], when=saturday)
+    first = agent.say("I am in severe pain in my tooth, I want the earliest available appointment").reply
+    assert "ring from 8am on Monday" in first
+    second = agent.say("yes, I am Mihir Gambhire").reply
+    assert second == "Shall I find you the earliest routine appointment?"
+
+
+def test_a_booking_request_is_carried_past_the_identity_questions(conn):
+    """He asked for the earliest appointment, gave his details, and was offered a message."""
+    row = conn.execute("SELECT * FROM patients WHERE code = 'hollis'").fetchone()
+    agent = agent_with(conn, [text_response("Have you been here before?")])
+    agent.say("I'd like to book the earliest available appointment")
+    assert agent.tools.booking_requested
+    agent.tools.caller_heard = None
+    agent.tools.verify_patient(row["full_name"], row["dob"], row["postcode"])
+    stage = agent._call_stage()
+    assert "offer the earliest" in stage and "Do not offer a message" in stage
+
+
+@pytest.mark.parametrize("said, expected", [
+    ("i want to book an earliest available appointment", True),
+    ("can I get a check up", True),
+    ("I want to cancel my appointment", False),
+    ("what time do you close?", False),
+])
+def test_a_booking_request_is_read_from_the_callers_words(conn, said, expected):
+    agent = agent_with(conn, [text_response("Of course.")])
+    agent.say(said)
+    assert agent.tools.booking_requested is expected
+
+
+
+def test_a_message_offered_instead_of_the_requested_booking_is_sent_back(conn):
+    """He asked for the earliest appointment, was identified, and was offered a message."""
+    row = conn.execute("SELECT * FROM patients WHERE code = 'hollis'").fetchone()
+    agent = agent_with(conn, [
+        text_response("Could I take your details?"),
+        tool_response([("verify_patient", {"full_name": row["full_name"], "dob": row["dob"], "postcode": row["postcode"]})]),
+        text_response("Would you like me to take a message for the team?"),
+        tool_response([("find_available_slots", {"appointment_type": "NHS_EXAM"})]),
+        text_response("The earliest is Monday at 8am. Shall I book it?"),
+    ])
+    agent.say("I'd like to book the earliest available appointment")
+    turn = agent.say(f"{row['full_name']}, {row['dob']}, {row['postcode']}")
+    assert turn.reply == "The earliest is Monday at 8am. Shall I book it?"
+    assert "find_available_slots" in turn.tools_used
+
+
+
+@pytest.mark.parametrize("said, asks", [
+    ("my name is Mihir and my phone number is 07700 900123", False),
+    ("sorry, what's the number again?", True),
+    ("when can I ring?", True),
+])
+def test_only_a_real_question_lets_the_advice_be_said_again(said, asks):
+    from sophia.agent_text import _ASKS_ABOUT_ADVICE
+
+    assert bool(_ASKS_ABOUT_ADVICE.search(said)) is asks
+
+
+@pytest.mark.parametrize("reply", [
+    "You can ring us on Monday morning from 8 o'clock when the urgent appointments are released.",
+    "Please call us from 8:00 on Monday.",
+])
+def test_other_ways_of_saying_when_to_ring_are_recognised(reply):
+    from sophia.agent_text import _GAVE_URGENT_ADVICE
+
+    assert _GAVE_URGENT_ADVICE.search(reply)
+
+
+def test_a_reply_already_offering_the_booking_is_not_sent_back(conn):
+    row = conn.execute("SELECT * FROM patients WHERE code = 'hollis'").fetchone()
+    agent = agent_with(conn, [
+        text_response("Could I take your details?"),
+        tool_response([("verify_patient", {"full_name": row["full_name"], "dob": row["dob"], "postcode": row["postcode"]})]),
+        text_response("Would you like me to book a routine appointment for when we reopen?"),
+    ])
+    agent.say("I'd like to book the earliest available appointment")
+    turn = agent.say(f"{row['full_name']}, {row['dob']}, {row['postcode']}")
+    assert turn.reply == "Would you like me to book a routine appointment for when we reopen?"
+    assert not agent.tools.booking_nudged
+
+
+
+def test_the_code_offers_the_earliest_slot_when_the_model_will_not(conn):
+    """On replay after replay, a caller who asked to book was asked "anything else?" instead."""
+    from datetime import datetime as _dt
+
+    saturday = clock.to_aware(_dt(2026, 9, 19, 11, 0))
+    row = conn.execute("SELECT * FROM patients WHERE code = 'hollis'").fetchone()
+    agent = agent_with(conn, [
+        text_response("Could I take your details?"),
+        tool_response([("verify_patient", {"full_name": row["full_name"], "dob": row["dob"], "postcode": row["postcode"]})]),
+        text_response("Thank you, Margaret. Is there anything else I can help you with today?"),
+        text_response("Thank you, Margaret. Is there anything else I can help you with today?"),
+    ], when=saturday)
+    agent.say("I'd like to book the earliest available appointment")
+    turn = agent.say(f"{row['full_name']}, {row['dob']}, {row['postcode']}")
+    assert turn.reply.startswith("Thank you, Margaret. The earliest routine appointment I have is Monday the 21st of September")
+    assert turn.reply.endswith("Would you like me to book it?")
+    assert agent.tools.offered_slots and "anything else" not in turn.reply
+
+
+
+LEAK = ("AI assistant on the phone for Museum Street Dental Practice, Warrington. Caller situation: severe tooth "
+        "pain. Urgent slots today: get_urgent_slots_today returned no slots (released: false). What should I say "
+        "to Mihir? 1. 2. 3.")
+
+
+def test_notes_printed_instead_of_a_reply_are_sent_back(conn):
+    """A replay printed the model's working, which a voice would have read out."""
+    agent = agent_with(conn, [text_response(LEAK), text_response("Could I take your full name, please?")])
+    assert agent.say("I have a severe pain in my tooth").reply == "Could I take your full name, please?"
+
+
+def test_notes_printed_twice_are_never_spoken(conn):
+    agent = agent_with(conn, [text_response(LEAK), text_response(LEAK)])
+    reply = agent.say("hello").reply
+    assert "get_urgent_slots_today" not in reply and "Caller situation" not in reply
+    assert reply == "Sorry, could you say that again?"
+
+
+def test_an_ordinary_reply_is_not_mistaken_for_notes():
+    from sophia.agent_text import leaked_notes
+
+    assert not leaked_notes("I have found your record. Would you like me to book the earliest appointment?")
+
+
+
+def test_a_yes_to_the_code_offer_is_booked_if_the_model_does_not(conn):
+    """A replay said "sure" to the offered slot and was offered a message instead."""
+    from datetime import datetime as _dt
+
+    saturday = clock.to_aware(_dt(2026, 9, 19, 11, 0))
+    row = conn.execute("SELECT * FROM patients WHERE code = 'hollis'").fetchone()
+    agent = agent_with(conn, [
+        text_response("Could I take your details?"),
+        tool_response([("verify_patient", {"full_name": row["full_name"], "dob": row["dob"], "postcode": row["postcode"]})]),
+        text_response("Thank you, Margaret. Is there anything else I can help you with today?"),
+        text_response("Thank you, Margaret. Is there anything else I can help you with today?"),
+        text_response("Let me take a message for the team. Would you like me to do that?"),
+    ], when=saturday)
+    agent.say("I'd like to book the earliest available appointment")
+    offer = agent.say(f"{row['full_name']}, {row['dob']}, {row['postcode']}").reply
+    assert offer.endswith("Would you like me to book it?")
+    turn = agent.say("SURE")
+    assert agent.tools.bookings_made
+    assert turn.reply.startswith("That is booked.") and "message" not in turn.reply
+
+
+def test_a_yes_with_a_but_is_not_taken_as_booking():
+    from sophia.agent_text import _YES_TO_OFFER
+
+    assert _YES_TO_OFFER.search("yes please")
+    assert not _YES_TO_OFFER.search("yes but do you have something in the afternoon?")
+    assert not _YES_TO_OFFER.search("no thanks")

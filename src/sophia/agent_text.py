@@ -24,8 +24,11 @@ from .tools import SophiaTools, ToolError
 
 # A single turn should never need more than a handful of tool calls. If it
 # does, something has gone wrong and looping forever would quietly drain
-# the free tier.
-MAX_TOOL_ROUNDS = 6
+# the free tier. Raised from 6 to 8 when a caller who gave every detail in
+# one sentence and asked for the earliest appointment needed verify, the
+# urgent check, the appointment type and the slot search in a single turn,
+# and ran out with "I am having trouble with that".
+MAX_TOOL_ROUNDS = 8
 
 # How many completed exchanges to keep as what was said. Older ones are
 # dropped, see _compact_history for why this matters on a free tier.
@@ -340,7 +343,9 @@ def replace_call_back_guess(reply: str) -> str | None:
 
 # Sophia telling a caller when to ring for an urgent appointment, in any of
 # the ways the model words it: "ring from 8am", "ring from eight in the morning".
-_GAVE_URGENT_ADVICE = re.compile(r"\bring\b[^.?!]{0,40}\b(?:8\s?am|eight)\b", re.IGNORECASE)
+_GAVE_URGENT_ADVICE = re.compile(
+    r"\b(?:ring|call)\b[^.?!]{0,50}\b(?:8\s?am|8\s?o'?clock|8:00|eight)\b", re.IGNORECASE
+)
 
 
 # A caller asking to be seen today, in their own words. A tester said "if
@@ -362,6 +367,17 @@ _NOT_URGENT = re.compile(
 _ASKED_IF_TODAY = re.compile(r"\b(?:seeing|seen) today\b|\burgent\b", re.IGNORECASE)
 
 
+# A caller asking to book. A tester opened with "I want to book the earliest
+# available appointment", gave his details, and was offered a message; he
+# had to ask again. Cancelling or moving an appointment is not a booking.
+_WANTS_BOOKING = re.compile(
+    r"\b(?:book|make|get|arrange)\b[^.?!]{0,30}\b(?:appointment|check ?up|slot)\b"
+    r"|\b(?:earliest|next|first)\b[^.?!]{0,15}\b(?:available|appointment|slot)\b",
+    re.IGNORECASE,
+)
+_CANCEL_OR_MOVE = re.compile(r"\b(?:cancel|move|reschedule|change)\b", re.IGNORECASE)
+
+
 def wants_to_be_seen_today(said: str, last_reply: str) -> bool:
     """True if the caller asks to be seen today, or says yes when asked."""
     if _NOT_URGENT.search(said or ""):
@@ -369,6 +385,59 @@ def wants_to_be_seen_today(said: str, last_reply: str) -> bool:
     if _WANTS_TODAY.search(said or ""):
         return True
     return bool(_ASKED_IF_TODAY.search(last_reply or "") and _SHORT_YES.search(said or ""))
+
+
+# A caller actually asking about ringing or the out of hours help, when it
+# may be said again. "My phone number is ..." is not one: a first version
+# matched "number" there and let the whole advice through a second time.
+_ASKS_ABOUT_ADVICE = re.compile(
+    r"\bwhat(?:'s| is) (?:the|that) number\b|\bwhich number\b|\bwhen (?:can|should|do|could) i (?:ring|call)\b"
+    r"|\bwhat time (?:can|should|do|could) i\b|\bout[- ]of[- ]hours\b|\b111\b"
+    r"|\b(?:say|repeat) (?:that|it) again\b|\bsorry,? what\b",
+    re.IGNORECASE,
+)
+
+
+def _without_advice(reply: str) -> str:
+    """The reply without sentences repeating when to ring or the out of hours help."""
+    kept = []
+    for sentence in re.findall(r"[^.?!]+[.?!]*", reply or ""):
+        repeats = (
+            _GAVE_URGENT_ADVICE.search(sentence)
+            or config.OUT_OF_HOURS_DENTAL_NUMBER in sentence
+            or re.search(r"\bno urgent (?:slots|appointments)\b", sentence, re.IGNORECASE)
+        )
+        if not repeats and sentence.strip():
+            kept.append(sentence.strip())
+    return " ".join(kept)
+
+
+# The model's own working, printed instead of a reply. On one replay Sophia
+# "said": "Caller situation: severe tooth pain ... get_urgent_slots_today
+# returned no slots (released: false) ... What should I say to Mihir? 1. 2.
+# 3." A voice would have read all of it out.
+_LEAKED_NOTES = re.compile(
+    r"\b(?:verify_patient|register_new_patient|get_patient_status|recommend_appointment_type"
+    r"|find_available_slots|get_urgent_slots_today|book_appointment|book_urgent_slot"
+    r"|check_cancellation|cancel_appointment|reschedule_appointment|search_practice_info"
+    r"|get_fee|take_message|record_call_outcome)\b"
+    r"|\bCALL STATE\b|\bSTAGE \d|\bcaller situation\b|\bwhat should i say\b"
+    r"|\b(?:released|verified|booked|found): (?:true|false)\b|\bAI assistant on the phone for\b",
+    re.IGNORECASE,
+)
+
+
+def leaked_notes(reply: str) -> bool:
+    """True if a reply contains the model's own notes rather than words for the caller."""
+    return bool(_LEAKED_NOTES.search(reply or ""))
+
+
+# Yes to "would you like me to book it?", and not a yes with a but.
+_YES_TO_OFFER = re.compile(
+    r"^\W*(?:yes|yeah|yep|yup|sure|ok(?:ay)?|please|go ahead|book it|that'?s fine|that works|perfect|great)\b"
+    r"(?![^.?!]*\b(?:but|different|another|other|later|earlier|afternoon)\b)",
+    re.IGNORECASE,
+)
 
 
 def _before_last_question(reply: str, sentence: str) -> str:
@@ -601,6 +670,11 @@ class SophiaAgent:
             if (tools.caller_has_same_day_problem()
                     and not tools.urgent_bookable_now() and not tools.urgent_advice_given):
                 carry_on = f' They have a same day problem and urgent appointments cannot be booked now. Tell them, once: "{tools.urgent_advice()}"'
+            if tools.booking_requested and not tools.bookings_made and tools.waiting_booking is None:
+                carry_on += (
+                    " They asked to book the earliest available appointment: call recommend_appointment_type "
+                    "and find_available_slots now and offer the earliest. Do not offer a message instead."
+                )
             if tools.waiting_booking is None and tools.offered_urgent and not tools.bookings_made:
                 carry_on = " They asked for an urgent appointment today: book with book_urgent_slot, not a check up."
             if tools.waiting_booking is not None:
@@ -746,6 +820,9 @@ class SophiaAgent:
         # listened. Confirming is for a name given earlier in the call.
         if wants_to_be_seen_today(text, last_reply):
             self.tools.urgent_requested = True
+        if _WANTS_BOOKING.search(text) and not _CANCEL_OR_MOVE.search(text):
+            self.tools.booking_requested = True
+        advice_given_before = self.tools.urgent_advice_given
         name = name_the_caller_gave(text, last_reply)
         screening = safety.screen(text)
         if screening.level is not safety.Level.ROUTINE:
@@ -764,6 +841,7 @@ class SophiaAgent:
             return record
 
         rechecked = False
+        leak_rechecked = False
         for _ in range(MAX_TOOL_ROUNDS):
             response = self._complete()
             served_by = getattr(self.client, "served_by", None)
@@ -773,12 +851,30 @@ class SophiaAgent:
 
             if not getattr(message, "tool_calls", None):
                 record.reply = plain_text(message.content or "")
+                if leaked_notes(record.reply):
+                    if not leak_rechecked:
+                        # Its own working, not a reply: sent back once.
+                        leak_rechecked = True
+                        self.messages.append({"role": "system", "content": (
+                            f"{_CHECK_FIRST} Your last reply contained your own notes and instructions. "
+                            "Reply only with the words Sophia says to the caller, nothing else."
+                        )})
+                        continue
+                    # Notes again: no further retries, it is dealt with below.
+                    self.messages.append({"role": "assistant", "content": record.reply})
+                    break
                 unchecked = self._unchecked_claim(record)
                 if unchecked and not rechecked:
                     # Sent back once, to look it up, rather than spoken.
                     rechecked = True
                     record.unchecked_claim = record.reply
                     self.messages.append({"role": "system", "content": unchecked})
+                    continue
+                # Its own once per call, so an earlier look it up retry in
+                # the same turn does not use it up.
+                missed = self._missed_booking(record)
+                if missed:
+                    self.messages.append({"role": "system", "content": missed})
                     continue
                 self.messages.append({"role": "assistant", "content": record.reply})
                 break
@@ -836,6 +932,13 @@ class SophiaAgent:
             if not (m.get("role") == "system" and str(m.get("content", "")).startswith(_CHECK_FIRST))
         ]
 
+        if leaked_notes(record.reply):
+            # Still notes after being sent back. None of it is spoken; the
+            # booking offer below, or a plain request to repeat, takes over.
+            record.corrected_claim = record.reply
+            record.reply = ""
+            self.messages[-1] = {"role": "assistant", "content": "Sorry, could you say that again?"}
+
         if self._unchecked_claim(record):
             # Checked once and still not looked up: better silence on the
             # point than a confident guess. A guessed call back habit has a
@@ -872,6 +975,33 @@ class SophiaAgent:
         if name and len(name.split()) >= len((self.tools.caller_name or "").split()):
             self.tools.caller_name = name
         self._note_details_asked_for(record.reply)
+        # A yes to the slot the code offered is kept, even if the model
+        # answered it with something else. A replay said "sure" to "would
+        # you like me to book it?" and was offered a message instead.
+        kept = self._keep_accepted_offer(text, last_reply, record)
+        if kept:
+            record.reply = kept
+            self.messages[-1] = {"role": "assistant", "content": record.reply}
+        # The booking the caller asked for, offered by the code when the
+        # model would not. See _offer_earliest.
+        offer = self._offer_earliest(record)
+        if offer:
+            record.reply = offer
+            self.messages[-1] = {"role": "assistant", "content": record.reply}
+        if not (record.reply or "").strip():
+            record.reply = "Sorry, could you say that again?"
+            self.messages[-1] = {"role": "assistant", "content": record.reply}
+        # Decided on the words actually spoken: a goodbye replaced by a
+        # booking or an offer must not hang up on the caller.
+        record.ends_call = call_is_over(text, record.reply, last_reply)
+        # Said once, it stays said. A tester heard the whole advice twice in
+        # a row, the second time in the model's own words, despite being told
+        # not to repeat it. Unless the caller asked about it, it comes out.
+        if advice_given_before and not _ASKS_ABOUT_ADVICE.search(text):
+            trimmed = _without_advice(record.reply)
+            if trimmed and trimmed != record.reply:
+                record.reply = trimmed
+                self.messages[-1] = {"role": "assistant", "content": record.reply}
         # The lookup said when urgent appointments open and the reply left it
         # out: a tester heard "we don't have any urgent appointments right
         # now" and nothing about ringing at 8am on Monday. Said by the code.
@@ -925,6 +1055,105 @@ class SophiaAgent:
         remaining = " ".join(kept)
         # Only worth saying if it still moves the call on.
         return remaining if "?" in remaining else None
+
+    def _keep_accepted_offer(self, said: str, last_reply: str, record: TurnRecord) -> str | None:
+        """Book the slot the code offered, if the caller said yes and the model did not book it."""
+        tools = self.tools
+        offer = tools.code_offer
+        if offer is None or tools.bookings_made or "book" in " ".join(record.tools_used):
+            return None
+        if "Would you like me to book it?" not in (last_reply or "") or not _YES_TO_OFFER.search(said or ""):
+            return None
+        tools.code_offer = None
+        try:
+            result = tools.book_appointment(offer["slot_ref"], offer["appointment_type"])
+        except ToolError:
+            return None
+        record.tool_calls.append(("book_appointment", dict(offer)))
+        record.tool_results.append(("book_appointment", result))
+        if not result.get("booked"):
+            return None
+        return f"{result['say']} Is there anything else I can help you with today?"
+
+    def _offer_earliest(self, record: TurnRecord) -> str | None:
+        """
+        The reply with the earliest routine slot offered, when the caller asked to book and nothing was offered.
+
+        A tester in pain on a Saturday opened with "I want to book the
+        earliest available appointment", gave every detail, and was asked
+        "is there anything else I can help you with?". Told in the call
+        state, then sent back once, the model still offered nothing, on
+        replay after replay: once urgent care was ruled out it lost the
+        booking. So the code offers it, with the same rules the tools use,
+        and the caller's yes books it as usual.
+        """
+        tools = self.tools
+        if record.ends_call:
+            return None  # a goodbye is not the place to start a booking
+        if not (tools.booking_requested and tools.verified_patient_id) or tools.bookings_made:
+            return None
+        if tools.offered_slots or tools.offered_urgent or tools.waiting_booking is not None:
+            return None
+        if tools.urgent_bookable_now() or re.search(r"\bbook\b[^.?!]*\?", record.reply or "", re.IGNORECASE):
+            return None
+        try:
+            kind = tools.recommend_appointment_type("check_up")
+            if not kind.get("appointment_type"):
+                return None
+            found = tools.find_available_slots(kind["appointment_type"])
+        except ToolError:
+            return None
+        if not found.get("slots"):
+            return None
+        slot = found["slots"][0]
+        tools.code_offer = {"slot_ref": slot["slot_ref"], "appointment_type": kind["appointment_type"]}
+        record.tool_calls += [("recommend_appointment_type", {"purpose": "check_up"}),
+                              ("find_available_slots", {"appointment_type": kind["appointment_type"]})]
+        record.tool_results += [("recommend_appointment_type", kind), ("find_available_slots", found)]
+        # Keep what was said, less a closing "anything else?", which the
+        # offer replaces.
+        kept = [s.strip() for s in re.findall(r"[^.?!]+[.?!]*", record.reply or "")
+                if s.strip() and not re.search(r"\banything else\b", s, re.IGNORECASE)]
+        offer = (
+            f"The earliest routine appointment I have is {slot['when']}, for a "
+            f"{kind['name'].lower()} at {kind['fee']}. Would you like me to book it?"
+        )
+        return " ".join([*kept, offer])
+
+    def _missed_booking(self, record: TurnRecord) -> str | None:
+        """
+        An instruction to offer the booking the caller asked for, if the reply offers a message instead.
+
+        A tester asked for the earliest appointment in his first sentence,
+        gave his details, and was offered a message; he had to ask again.
+        The call state already said what he wanted, and the model still
+        chose a message, so the reply is sent back once.
+        """
+        tools = self.tools
+        if not (tools.booking_requested and tools.verified_patient_id) or tools.bookings_made:
+            return None
+        if tools.offered_slots or tools.offered_urgent or tools.waiting_booking is not None:
+            return None
+        if set(record.tools_used) & {"find_available_slots", "book_appointment", "book_urgent_slot"}:
+            return None
+        # Once per call. A replay's reply offered nothing at all, just
+        # "anything else I can help with?", so any reply counts, not only one
+        # offering a message; and a caller who then changes their mind is
+        # not pushed twice.
+        if tools.booking_nudged:
+            return None
+        # Already offering to book, which is what was wanted: a replay's good
+        # reply ("would you like me to book a routine appointment for when we
+        # reopen?") was sent back anyway, and the retry came back worse.
+        if re.search(r"\bbook\b[^.?!]*\?", record.reply or "", re.IGNORECASE):
+            return None
+        tools.booking_nudged = True
+        return (
+            f"{_CHECK_FIRST} The caller asked to book the earliest available appointment and is now "
+            "identified. Do not offer a message or ask what else they need. Call "
+            "recommend_appointment_type with purpose check_up, then find_available_slots, and offer "
+            "the earliest routine slot now. Urgent advice already given is not a reason to skip it."
+        )
 
     def _unchecked_claim(self, record: TurnRecord) -> str | None:
         """

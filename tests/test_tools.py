@@ -1267,3 +1267,16 @@ def test_the_urgent_lookup_does_not_repeat_advice_already_given(conn):
     result = session.get_urgent_slots_today()
     assert result["reason"] == "already_told_when_to_ring"
     assert "8am" not in result["say"]
+
+
+
+@pytest.mark.parametrize("code", ["PRIV_EMERG_NEW", "PRIV_EMERG_EXISTING", "NHS_URGENT"])
+def test_an_urgent_type_cannot_be_searched_or_booked_ahead(conn, code):
+    """A replay on a Saturday booked an emergency consultation for Monday at 8am."""
+    row = conn.execute("SELECT * FROM patients WHERE code = 'hollis'").fetchone()
+    session = at(conn, SATURDAY_11)
+    session.verify_patient(row["full_name"], row["dob"], row["postcode"])
+    found = session.find_available_slots(code)
+    assert found["slots"] == [] and found["reason"] == "urgent_only_on_the_day"
+    booked = session.book_appointment("1@2026-09-21T08:00", code)
+    assert booked["booked"] is False
