@@ -480,6 +480,8 @@ class SophiaTools:
         self.booking_nudged = False
         # The slot the code itself offered, so a yes to it can be kept.
         self.code_offer: dict | None = None
+        # Whether an unclear answer on a reminder call has been checked once.
+        self._wrong_person_checked = False
         # True once the caller has said they are new to the practice, False
         # once they have said they have been before, None until either.
         # Set by the agent from the caller's own words.
@@ -1747,6 +1749,19 @@ class SophiaTools:
         if outcome not in ("wrong_person", "call_back_later"):
             self._require_verified()
 
+        # A tester answered "you are speaking to Jones", speech to text for
+        # "Joan", and Sophia apologised and hung up on the patient she had
+        # rung. Someone else only counts when they say so; anything less is
+        # checked once by asking.
+        if (outcome == "wrong_person" and self.caller_heard and not self._wrong_person_checked
+                and not _NOT_THE_PATIENT.search(self.caller_heard[-1])):
+            self._wrong_person_checked = True
+            return {
+                "recorded": False,
+                "reason": "not_clear",
+                "say": f"Sorry, just to check, am I speaking with {self.reminder.patient_name}?",
+            }
+
         outbound.record_outcome(self.conn, self.reminder, outcome)
         return {"recorded": True, "outcome": outcome}
 
@@ -1826,12 +1841,19 @@ class SophiaTools:
         self.conn.commit()
         self.message_id = cursor.lastrowid
 
+        # A tester asked for a call "between one and five" and was promised
+        # one. The time is passed on; when the team calls is theirs to say.
+        said = " ".join([reason or "", detail or "", *(self.caller_heard or [])[-3:]])
+        timing = (
+            " I have noted when suits you best, though I can't promise exactly when they will ring."
+            if _PREFERRED_TIME.search(said) else ""
+        )
         return {
             "taken": True,
             "message_id": cursor.lastrowid,
             "say": (
                 f"I have taken that down for the team, {first}, and they will call you back "
-                "on the number you gave me."
+                f"on the number you gave me.{timing}"
             ),
         }
 
@@ -1951,6 +1973,22 @@ class SophiaTools:
             ),
         }
 
+
+# A caller saying when suits them for a call back.
+_PREFERRED_TIME = re.compile(
+    r"\bbetween\b[^.?!]{0,20}\b(?:\d|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b"
+    r"|\b\d{1,2}\s?(?:am|pm|a\.m\.|p\.m\.)\b|\b(?:in the |this )?(?:morning|afternoon|evening)\b|\bafter \d",
+    re.IGNORECASE,
+)
+
+# Someone saying they are not the patient Sophia rang.
+_NOT_THE_PATIENT = re.compile(
+    r"^\W*(?:no|nope|nah)\b|\bnot (?:here|in|home|available|around|me)\b|\bwrong number\b"
+    r"|\b(?:she|he|they)(?:'s| is| are) (?:not|out|away|at work|busy)\b|\bisn'?t (?:here|in|home|available)\b"
+    r"|\b(?:her|his|their) (?:husband|wife|son|daughter|partner|mother|father|mum|dad|carer|brother|sister)\b"
+    r"|\bnobody (?:by|of|called)\b|\bdoesn'?t live here\b|\bno one (?:by|of|called)\b",
+    re.IGNORECASE,
+)
 
 # Urgent care is booked only from the day's urgent slots, never ahead.
 URGENT_TYPE_CODES = frozenset({"NHS_URGENT", "PRIV_EMERG_NEW", "PRIV_EMERG_EXISTING"})

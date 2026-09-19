@@ -1280,3 +1280,12 @@ def test_an_urgent_type_cannot_be_searched_or_booked_ahead(conn, code):
     assert found["slots"] == [] and found["reason"] == "urgent_only_on_the_day"
     booked = session.book_appointment("1@2026-09-21T08:00", code)
     assert booked["booked"] is False
+
+
+
+def test_a_preferred_call_back_time_is_noted_not_promised(conn):
+    """A tester asked for a call "between one and five" and was promised one."""
+    session = at(conn, a_weekday_at(10))
+    session.caller_heard = ["call me anything between one to 5PM", "it's 9307799220"]
+    result = session.take_message("Mihir Gambhire", "Question about gum treatment", "9307799220")
+    assert "can't promise exactly when" in result["say"]

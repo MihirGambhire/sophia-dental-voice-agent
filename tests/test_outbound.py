@@ -183,3 +183,29 @@ def test_starting_a_call_marks_the_reminder_as_called(conn):
     outbound.mark_started(conn, reminder)
     row = conn.execute("SELECT status, attempts FROM reminder_queue WHERE id = ?", (reminder.id,)).fetchone()
     assert row["status"] == "called" and row["attempts"] == 1
+
+
+
+@pytest.mark.parametrize("answer, recorded", [
+    ("Yeah. You are speaking to Jones.", False),
+    ("No, she's not in at the moment", True),
+    ("This is her husband", True),
+    ("wrong number", True),
+])
+def test_wrong_person_needs_the_person_to_say_so(conn, answer, recorded):
+    """"You are speaking to Jones", speech to text for "Joan", ended a reminder call."""
+    from sophia.tools import SophiaTools
+
+    row = conn.execute("SELECT * FROM reminder_queue ORDER BY id LIMIT 1").fetchone()
+    from sophia import outbound
+    reminder = outbound.load(conn, row["id"])
+    session = SophiaTools(conn)
+    session.reminder = reminder
+    session.expected_patient_id = reminder.patient_id
+    session.caller_heard = [answer]
+    result = session.record_call_outcome("wrong_person")
+    assert result["recorded"] is recorded
+    if not recorded:
+        assert result["say"] == f"Sorry, just to check, am I speaking with {reminder.patient_name}?"
+        # Asked once; a second unclear answer is accepted.
+        assert session.record_call_outcome("wrong_person")["recorded"] is True

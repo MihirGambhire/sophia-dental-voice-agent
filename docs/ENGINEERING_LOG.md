@@ -1570,6 +1570,24 @@ offered straight after identity, booked on yes.
 
 ---
 
+### 50. "You are speaking to Jones"
+
+**Symptom.** On a reminder call to Joan Fairbanks the tester answered
+"you are speaking to Joan", speech to text wrote "Jones", and Sophia
+recorded the wrong person, apologised and hung up on the patient she had
+rung. On another call, a caller asking to be rung "between one and five"
+was told the team would ring between one and five, a promise nobody made.
+
+**Fix.** `record_call_outcome` accepts "wrong_person" only when the answer
+says so: a no, "she's not in", "wrong number", "this is her husband".
+Anything less is checked once, "Sorry, just to check, am I speaking with
+Joan Fairbanks?", and only a second unclear answer is accepted. A message
+with a preferred time now says the time is noted, not promised. On calls
+Sophia makes, the goodbye thanks them for their time, not for calling.
+Replayed: "Jones" is asked about, and the call goes on to the reminder.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns
