@@ -29,7 +29,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
-from . import clock, config, dashboard, knowledge, policies
+from . import clock, config, dashboard, knowledge, policies, safety
 from .policies import PatientFacts
 
 # Availability is searched on this grid. Ten minutes keeps the number of
@@ -467,6 +467,12 @@ class SophiaTools:
         self.message_id: int | None = None
         # Cancellations made on this call, for the call summary.
         self.cancellations_made: list[str] = []
+        # Whether Sophia has already told a caller with a same day problem
+        # when to ring for an urgent appointment. Set by the agent.
+        self.urgent_advice_given = False
+        # True once today's urgent appointments have been looked up: the
+        # caller asked to be seen today, whatever words they used for why.
+        self.urgent_requested = False
         # True once the caller has said they are new to the practice, False
         # once they have said they have been before, None until either.
         # Set by the agent from the caller's own words.
@@ -776,6 +782,54 @@ class SophiaTools:
             letters = ", letter by letter" if label == "postcode" else ""
             return f"Sorry, I want to be sure I have your {label} exactly right. Could you say it again{letters}?"
         return f"Could you tell me your {label}, please?"
+
+    def next_urgent_release(self) -> str:
+        """
+        When the caller can next ring for an urgent appointment, as Sophia says it.
+
+        "8am tomorrow" was wrong every Friday, and a closed day gave no
+        time at all, so a tester in severe pain on a Saturday was booked a
+        routine check up and never told when urgent appointments open.
+        """
+        today = self.now.date()
+        if clock.is_open_day(today) and not clock.urgent_slots_released(self.now):
+            return "8am this morning"
+        day = clock.next_open_day(today + timedelta(days=1))
+        if day == today + timedelta(days=1):
+            return f"8am tomorrow, {clock.spoken_date(day)}"
+        return f"8am on {clock.spoken_date(day)}"
+
+    def urgent_bookable_now(self) -> bool:
+        """True if one of today's urgent appointments can still be booked."""
+        if not clock.urgent_slots_released(self.now):
+            return False
+        rows = self.conn.execute(
+            "SELECT slot_time FROM urgent_slots WHERE slot_date = ? AND status = 'available'",
+            (self.now.strftime(clock.DB_DATE_FORMAT),),
+        ).fetchall()
+        return any(clock.combine(self.now.date(), clock.parse_time(r["slot_time"])) > self.now for r in rows)
+
+    def caller_has_same_day_problem(self) -> bool:
+        """
+        True if the caller wants to be seen today.
+
+        Either something they said is a same day problem by the safety
+        screen, or they asked to be seen today and urgent appointments were
+        looked up. A tester said "I would like it seen today" with no
+        symptom the screen knows, and was never told when to ring.
+        """
+        return self.urgent_requested or any(
+            safety.screen(said).level is safety.Level.URGENT for said in (self.caller_heard or [])
+        )
+
+    def urgent_advice(self) -> str:
+        """What to tell a caller with a same day problem who cannot be booked urgently right now."""
+        return (
+            f"For the problem you mentioned, please ring from {self.next_urgent_release()}, when "
+            "the day's urgent appointments are released. If you need help before then, call the "
+            f"out of hours dental service on {config.OUT_OF_HOURS_DENTAL_NUMBER}, or NHS "
+            f"{config.NHS_URGENT_NUMBER}."
+        )
 
     def _carry_on(self) -> dict:
         """
@@ -1211,14 +1265,27 @@ class SophiaTools:
         Before 8am there is nothing to offer, and saying so is the honest
         answer rather than showing tomorrow's.
         """
+        self.urgent_requested = True
+        # Already told when to ring: say only what is new, or it is read out
+        # again. A replay repeated the whole advice straight after it.
+        if self.urgent_advice_given and not self.urgent_bookable_now():
+            return {
+                "released": clock.urgent_slots_released(self.now),
+                "slots": [],
+                "reason": "already_told_when_to_ring",
+                "say": "There are no urgent appointments to book right now.",
+            }
         if not clock.is_open_day(self.now.date()):
             return {
                 "released": False,
                 "reason": "closed_today",
                 "slots": [],
+                "ring_from": self.next_urgent_release(),
                 "say": (
-                    "The practice is closed today. For urgent dental problems you can "
-                    f"call {config.OUT_OF_HOURS_DENTAL_NUMBER}, or NHS {config.NHS_URGENT_NUMBER}."
+                    "The practice is closed today. Urgent appointments are released by phone "
+                    f"from {self.next_urgent_release()}, so please ring then. Until then, for "
+                    f"urgent dental problems you can call {config.OUT_OF_HOURS_DENTAL_NUMBER}, "
+                    f"or NHS {config.NHS_URGENT_NUMBER}."
                 ),
             }
 
@@ -1227,6 +1294,7 @@ class SophiaTools:
                 "released": False,
                 "reason": "before_release",
                 "slots": [],
+                "ring_from": self.next_urgent_release(),
                 "say": (
                     "Today's urgent appointments are released at 8 o'clock this morning, "
                     "so they are not open yet. If you ring back from 8am we can look at "
@@ -1258,11 +1326,12 @@ class SophiaTools:
                 "released": True,
                 "slots": [],
                 "reason": "none_left",
+                "ring_from": self.next_urgent_release(),
                 "say": (
                     "I am sorry, today's urgent appointments have all gone. "
                     f"If you need to be seen today, NHS {config.NHS_URGENT_NUMBER} can help, "
                     f"or the out of hours dental service on {config.OUT_OF_HOURS_DENTAL_NUMBER}. "
-                    "You are also welcome to ring us from 8am tomorrow."
+                    f"You are also welcome to ring us from {self.next_urgent_release()}."
                 ),
             }
 
@@ -1381,8 +1450,23 @@ class SophiaTools:
                 f"That is booked. {clock.spoken_datetime(start)} with {clinician['name']}, "
                 f"for a {type_row['name'].lower()}, and the charge is {fee}.{payment} "
                 "If you need to change it, please give us at least 24 hours notice."
+                + self._same_day_problem_note()
             ),
         }
+
+    def _same_day_problem_note(self) -> str:
+        """
+        For a caller with a same day problem who has just been booked a routine appointment.
+
+        A tester with severe tooth pain on a Saturday was booked Monday's
+        check up and nothing more. A routine appointment is not care for
+        the pain, so the booking itself says what is.
+        """
+        if not self.caller_has_same_day_problem() or self.urgent_advice_given:
+            return ""
+        if self.urgent_bookable_now():
+            return " If you would rather be seen today for the problem you mentioned, there are still urgent appointments today."
+        return " " + self.urgent_advice()
 
     def book_urgent_slot(self, urgent_slot_id: int) -> dict:
         """

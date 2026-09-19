@@ -10,7 +10,7 @@ from datetime import date, datetime, time, timedelta
 
 import pytest
 
-from sophia import clock
+from sophia import clock, config
 from sophia.tools import SophiaTools, ToolError
 
 
@@ -1198,3 +1198,72 @@ def test_a_weekend_day_is_closed_not_empty(conn):
     saturday = session.now.date() + timedelta(days=(5 - session.now.weekday()) % 7)
     result = session.find_available_slots("PRIV_NEW_EXAM", on_date=saturday.isoformat())
     assert result["reason"] == "closed_that_day"
+
+
+
+# ---------------------------------------------------------------------------
+# A same day problem when urgent appointments cannot be booked
+# ---------------------------------------------------------------------------
+
+SATURDAY_11 = clock.combine(date(2026, 9, 19), time(11))
+FRIDAY_17_50 = clock.combine(date(2026, 9, 25), time(17, 50))
+
+
+@pytest.mark.parametrize(
+    "when, expected",
+    [
+        (clock.combine(date(2026, 9, 21), time(7, 30)), "8am this morning"),
+        (clock.combine(date(2026, 9, 21), time(15)), "8am tomorrow, Tuesday the 22nd of September"),
+        (SATURDAY_11, "8am on Monday the 21st of September"),
+        (FRIDAY_17_50, "8am on Monday the 28th of September"),
+    ],
+)
+def test_the_next_urgent_release_names_the_right_day(conn, when, expected):
+    """"8am tomorrow" was wrong every Friday, and a closed day named no time at all."""
+    assert at(conn, when).next_urgent_release() == expected
+
+
+def test_a_closed_day_says_when_to_ring(conn):
+    result = at(conn, SATURDAY_11).get_urgent_slots_today()
+    assert result["reason"] == "closed_today"
+    assert "8am on Monday the 21st of September" in result["say"]
+
+
+def test_a_routine_booking_for_someone_in_pain_says_when_to_ring(conn):
+    """A tester with severe tooth pain on a Saturday was booked Monday's check up and nothing more."""
+    row = conn.execute("SELECT * FROM patients WHERE code = 'hollis'").fetchone()
+    session = at(conn, SATURDAY_11)
+    session.verify_patient(row["full_name"], row["dob"], row["postcode"])
+    session.caller_heard = ["it needs seeing today, I have a severe pain in my tooth"]
+    slot = session.find_available_slots("NHS_EXAM")["slots"][0]
+    result = session.book_appointment(slot["slot_ref"], "NHS_EXAM")
+    assert result["booked"]
+    assert "ring from 8am on Monday the 21st of September" in result["say"]
+    assert config.OUT_OF_HOURS_DENTAL_NUMBER in result["say"]
+
+
+def test_a_routine_booking_without_a_same_day_problem_says_nothing_extra(conn):
+    row = conn.execute("SELECT * FROM patients WHERE code = 'hollis'").fetchone()
+    session = at(conn, SATURDAY_11)
+    session.verify_patient(row["full_name"], row["dob"], row["postcode"])
+    session.caller_heard = ["I'd like a check up please"]
+    slot = session.find_available_slots("NHS_EXAM")["slots"][0]
+    assert "ring from" not in session.book_appointment(slot["slot_ref"], "NHS_EXAM")["say"]
+
+
+
+def test_asking_to_be_seen_today_counts_as_a_same_day_problem(conn):
+    """A tester asked for it to be seen today without naming a symptom the screen knows."""
+    session = at(conn, SATURDAY_11)
+    session.caller_heard = ["if possible yes i would like it if it is seen today"]
+    assert not session.caller_has_same_day_problem()
+    session.get_urgent_slots_today()
+    assert session.caller_has_same_day_problem()
+
+
+def test_the_urgent_lookup_does_not_repeat_advice_already_given(conn):
+    session = at(conn, SATURDAY_11)
+    session.urgent_advice_given = True
+    result = session.get_urgent_slots_today()
+    assert result["reason"] == "already_told_when_to_ring"
+    assert "8am" not in result["say"]

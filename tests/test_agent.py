@@ -895,3 +895,106 @@ def test_a_dash_is_read_as_a_pause_or_a_range(spoken, expected):
     from sophia.agent_text import plain_text
 
     assert plain_text(spoken) == expected
+
+
+def test_an_unchecked_guess_is_dropped_but_the_question_is_kept(conn):
+    """A tester gave his name and was asked what he wanted to know, because one sentence guessed."""
+    guess = "Thank you, Mihir. We don't have any urgent appointments today. Could you tell me your date of birth?"
+    agent = agent_with(conn, [text_response(guess), text_response(guess)])
+    turn = agent.say("Mihir Gambhire")
+    assert turn.reply == "Thank you, Mihir. Could you tell me your date of birth?"
+    assert turn.corrected_claim == guess
+
+
+def test_a_guess_with_nothing_else_to_say_still_gets_the_careful_answer(conn):
+    guess = "We don't have any appointments this week."
+    agent = agent_with(conn, [text_response(guess), text_response(guess)])
+    assert "I don't want to tell you the wrong thing" in agent.say("Anything this week?").reply
+
+
+def test_the_urgent_advice_is_given_once(conn):
+    """A replay told a caller in pain when to ring for an urgent appointment twice."""
+    from datetime import datetime as _dt
+
+    saturday = clock.to_aware(_dt(2026, 9, 19, 11, 0))
+    agent = agent_with(conn, [
+        text_response("For the problem you mentioned, please ring from 8am on Monday. Have you been here before?"),
+        text_response("Could I take your full name?"),
+    ], when=saturday)
+    agent.say("I have a severe pain in my tooth, it needs seeing today")
+    assert agent.tools.urgent_advice_given
+    stage = agent._call_stage()
+    assert "already told them when to ring" in stage and "Tell them, once" not in stage
+
+
+@pytest.mark.parametrize("reply", [
+    "Please ring from eight in the morning on Monday.",
+    "You can ring us from 8am on Monday.",
+])
+def test_the_urgent_advice_is_recognised_however_it_is_worded(conn, reply):
+    agent = agent_with(conn, [text_response(reply)])
+    agent.say("I have a severe pain in my tooth")
+    assert agent.tools.urgent_advice_given
+
+
+
+def test_when_to_ring_is_added_if_the_reply_leaves_it_out(conn):
+    """"We don't have any urgent appointments right now", and nothing about 8am on Monday."""
+    from datetime import datetime as _dt
+
+    saturday = clock.to_aware(_dt(2026, 9, 19, 11, 0))
+    agent = agent_with(conn, [
+        tool_response([("get_urgent_slots_today", {})]),
+        text_response("The practice is closed today, so there are no urgent appointments right now. "
+                      "Would you like a routine appointment instead?"),
+    ], when=saturday)
+    reply = agent.say("if possible I would like it seen today").reply
+    assert "ring from 8am on Monday the 21st of September" in reply
+    assert reply.endswith("Would you like a routine appointment instead?")
+    assert agent.tools.urgent_advice_given
+
+
+
+@pytest.mark.parametrize(
+    "said, last_reply, expected",
+    [
+        ("if possible yes i would like it if it is seen today", "Anything else?", True),
+        ("can I get an urgent appointment", "How can I help?", True),
+        ("yes", "Is this a problem that needs seeing today, or a routine check up?", True),
+        ("no it's not urgent", "Is this urgent?", False),
+        ("a routine check up please", "How can I help?", False),
+    ],
+)
+def test_asking_to_be_seen_today_is_read_from_the_callers_words(said, last_reply, expected):
+    from sophia.agent_text import wants_to_be_seen_today
+
+    assert wants_to_be_seen_today(said, last_reply) is expected
+
+
+def test_the_out_of_hours_number_alone_is_not_the_whole_advice(conn):
+    """A replay gave only the out of hours number, and the 8am advice never came."""
+    from datetime import datetime as _dt
+
+    saturday = clock.to_aware(_dt(2026, 9, 19, 11, 0))
+    agent = agent_with(conn, [
+        text_response("You can call the out of hours service on 0161 476 9651. Would you like a routine appointment?"),
+    ], when=saturday)
+    reply = agent.say("if possible I would like it seen today").reply
+    assert "ring from 8am on Monday" in reply
+    assert reply.endswith("Would you like a routine appointment?")
+
+
+@pytest.mark.parametrize("said", ["do I have an appointment today?", "is my appointment today or tomorrow?"])
+def test_asking_about_their_own_appointment_is_not_a_same_day_request(said):
+    from sophia.agent_text import wants_to_be_seen_today
+
+    assert wants_to_be_seen_today(said, "How can I help?") is False
+
+
+def test_advice_goes_first_when_the_reply_asks_for_something_again():
+    from sophia.agent_text import _before_last_question
+
+    reply = "Sorry, I did not catch that number. Could you say it again, digit by digit?"
+    assert _before_last_question(reply, "Ring at 8am.") == "Ring at 8am. " + reply
+    assert _before_last_question("We are closed. Shall I book Monday?", "Ring at 8am.") == \
+        "We are closed. Ring at 8am. Shall I book Monday?"

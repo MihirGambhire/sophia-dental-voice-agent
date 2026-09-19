@@ -1505,6 +1505,47 @@ it on a laptop screen. A dash in a reply is now read aloud as a pause, or
 
 ---
 
+### 49. Severe pain on a Saturday
+
+**Symptom.** A tester rang on a Saturday with severe tooth pain. Sophia
+correctly said the practice was closed and gave the out of hours number,
+then booked him Monday's routine check up and said nothing more. Nobody
+told him urgent appointments open at 8am on Monday. Earlier in the call,
+after he gave his name, he heard "I don't want to tell you the wrong thing
+there, could you tell me again exactly what you'd like to know?".
+
+**Causes.** The urgent lookup's closed day answer named no time to ring,
+and its "ring from 8am tomorrow" was wrong every Friday. Nothing linked a
+same day problem to a routine booking. And the guard against unchecked
+claims threw away a whole reply when one sentence of it guessed at
+availability, including the thanks and the next question.
+
+**Fix.** The next urgent release is worked out in code, "8am this
+morning", "8am tomorrow, Tuesday the 22nd" or "8am on Monday the 21st",
+and the lookup uses it. When a caller has a same day problem and urgent
+appointments cannot be booked now, the call state tells Sophia to say when
+to ring and the out of hours number, once: a first version made her say
+it twice, and read out an instruction meant for her, so the call now
+remembers it has been said, however she words it. A routine booking for
+such a caller carries the same advice unless it has been given. The guard
+now drops only the guessing sentence and keeps the rest when a question is
+left. Replayed on a Saturday: the advice once, when the pain was
+mentioned, then a normal booking and goodbye.
+
+**Then a second tester call** asked for it to be "seen today" without a
+symptom the safety screen knows, and heard only the out of hours number.
+Two gaps: a same day request was read only from symptoms, and the out of
+hours number on its own was counted as the advice given. Now the caller's
+own words count ("seen today", "as soon as possible", "urgent
+appointment", or yes to "does it need seeing today?", but not "not urgent"
+or "do I have an appointment today?"), only the when to ring sentence
+counts as given, and if a reply after such a request leaves it out, the
+code adds it: before the closing question, or first when the reply is
+asking the caller to repeat something. Once given, the urgent lookup no
+longer returns it, after a replay read it out a second time.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns

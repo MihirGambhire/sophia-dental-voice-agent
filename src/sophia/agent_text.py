@@ -338,6 +338,55 @@ def replace_call_back_guess(reply: str) -> str | None:
     return " ".join(part for part in kept if part)
 
 
+# Sophia telling a caller when to ring for an urgent appointment, in any of
+# the ways the model words it: "ring from 8am", "ring from eight in the morning".
+_GAVE_URGENT_ADVICE = re.compile(r"\bring\b[^.?!]{0,40}\b(?:8\s?am|eight)\b", re.IGNORECASE)
+
+
+# A caller asking to be seen today, in their own words. A tester said "if
+# possible I would like it seen today" with no symptom the safety screen
+# knows, and was booked Monday's check up without being told when urgent
+# appointments open. "Not urgent" must not count.
+_WANTS_TODAY = re.compile(
+    r"\b(?:seen|seeing|see me|see someone|be seen|appointment|come in|get in)\b[^.?!]{0,30}"
+    r"\b(?:today|this morning|this afternoon|tonight|as soon as possible|asap|straight away|right away)\b"
+    r"|\b(?:urgent|emergency) appointment\b|\bneeds? (?:to be seen|seeing) today\b",
+    re.IGNORECASE,
+)
+_NOT_URGENT = re.compile(
+    r"\bnot\b[^.?!]{0,15}\b(?:urgent|today)\b|\bno rush\b"
+    # "Do I have an appointment today?" is about their own booking.
+    r"|\b(?:do i have|have i got|is my|my)\b[^.?!]{0,20}\bappointments?\b",
+    re.IGNORECASE,
+)
+_ASKED_IF_TODAY = re.compile(r"\b(?:seeing|seen) today\b|\burgent\b", re.IGNORECASE)
+
+
+def wants_to_be_seen_today(said: str, last_reply: str) -> bool:
+    """True if the caller asks to be seen today, or says yes when asked."""
+    if _NOT_URGENT.search(said or ""):
+        return False
+    if _WANTS_TODAY.search(said or ""):
+        return True
+    return bool(_ASKED_IF_TODAY.search(last_reply or "") and _SHORT_YES.search(said or ""))
+
+
+def _before_last_question(reply: str, sentence: str) -> str:
+    """
+    Put a sentence in before the reply's closing question, or at the end.
+
+    When the reply is asking the caller to repeat something, the sentence
+    goes first instead: "Sorry, I did not catch that number. [advice]
+    Could you say it again?" left "it" pointing at the wrong thing.
+    """
+    parts = re.findall(r"[^.?!]+[.?!]*", reply or "")
+    if (reply or "").lstrip().lower().startswith("sorry") or (parts and " again" in parts[-1].lower()):
+        return f"{sentence} {(reply or '').strip()}".strip()
+    if parts and parts[-1].strip().endswith("?"):
+        return " ".join([*(p.strip() for p in parts[:-1]), sentence, parts[-1].strip()]).strip()
+    return f"{(reply or '').strip()} {sentence}".strip()
+
+
 def call_is_over(said: str, reply: str, last_reply: str = "") -> bool:
     """True when the caller is done and Sophia has said goodbye, or she has ended it."""
     # An outright "goodbye" closing her reply ends the call on its own. A
@@ -549,6 +598,9 @@ class SophiaAgent:
             ).fetchone()[0]
             booked = f"{upcoming} upcoming appointment{'s' if upcoming != 1 else ''}" if upcoming else "no upcoming appointments"
             carry_on = ""
+            if (tools.caller_has_same_day_problem()
+                    and not tools.urgent_bookable_now() and not tools.urgent_advice_given):
+                carry_on = f' They have a same day problem and urgent appointments cannot be booked now. Tell them, once: "{tools.urgent_advice()}"'
             if tools.waiting_booking is None and tools.offered_urgent and not tools.bookings_made:
                 carry_on = " They asked for an urgent appointment today: book with book_urgent_slot, not a check up."
             if tools.waiting_booking is not None:
@@ -562,12 +614,25 @@ class SophiaAgent:
                 "can be discussed on this call. Carry on with what they asked for earlier in the "
                 f"call rather than asking how you can help.{carry_on}"
             )
-        urgency = (
-            "They described a same day problem, so offer today's urgent appointments, not a routine check up. "
-            if screening is not None and screening.level is safety.Level.URGENT
-            else "If they want to book an appointment and have not said why, first ask whether it needs "
-            "seeing today. Not for cancelling, moving or checking one. "
-        )
+        same_day = (screening is not None and screening.level is safety.Level.URGENT) or tools.urgent_requested
+        if same_day:
+            if tools.urgent_bookable_now():
+                urgency = "They described a same day problem, so offer today's urgent appointments, not a routine check up. "
+            elif tools.urgent_advice_given:
+                urgency = (
+                    "They have a same day problem. You have already told them when to ring for an urgent "
+                    "appointment and the out of hours number: do not say it again unless they ask. "
+                )
+            else:
+                urgency = (
+                    "They described a same day problem, but urgent appointments cannot be booked right now. "
+                    f'Tell them, once: "{tools.urgent_advice()}" '
+                )
+        else:
+            urgency = (
+                "If they want to book an appointment and have not said why, first ask whether it needs "
+                "seeing today. Not for cancelling, moving or checking one. "
+            )
         if tools.caller_said_new is True:
             identify = (
                 "The caller has said they are NEW to the practice: take name, date of birth, "
@@ -679,6 +744,8 @@ class SophiaAgent:
         # words, so the model has it; asking "just to confirm, your name is
         # Mihir Gambhire?" straight after he said it sounded like she had not
         # listened. Confirming is for a name given earlier in the call.
+        if wants_to_be_seen_today(text, last_reply):
+            self.tools.urgent_requested = True
         name = name_the_caller_gave(text, last_reply)
         screening = safety.screen(text)
         if screening.level is not safety.Level.ROUTINE:
@@ -774,9 +841,13 @@ class SophiaAgent:
             # point than a confident guess. A guessed call back habit has a
             # known answer, which beats asking the caller to repeat themselves.
             record.corrected_claim = record.reply
-            record.reply = replace_call_back_guess(record.reply) or (
-                "I don't want to tell you the wrong thing there, so let me check. "
-                "Could you tell me again exactly what you'd like to know?"
+            record.reply = (
+                replace_call_back_guess(record.reply)
+                or self._without_unchecked_sentences(record)
+                or (
+                    "I don't want to tell you the wrong thing there, so let me check. "
+                    "Could you tell me again exactly what you'd like to know?"
+                )
             )
             self.messages[-1] = {"role": "assistant", "content": record.reply}
 
@@ -801,6 +872,16 @@ class SophiaAgent:
         if name and len(name.split()) >= len((self.tools.caller_name or "").split()):
             self.tools.caller_name = name
         self._note_details_asked_for(record.reply)
+        # The lookup said when urgent appointments open and the reply left it
+        # out: a tester heard "we don't have any urgent appointments right
+        # now" and nothing about ringing at 8am on Monday. Said by the code.
+        if (self.tools.caller_has_same_day_problem() and not self.tools.urgent_bookable_now()
+                and not self.tools.urgent_advice_given and not _GAVE_URGENT_ADVICE.search(record.reply or "")):
+            record.reply = _before_last_question(record.reply, self.tools.urgent_advice())
+            self.messages[-1] = {"role": "assistant", "content": record.reply}
+        # Said once is enough: a replay had the whole urgent advice twice.
+        if _GAVE_URGENT_ADVICE.search(record.reply or ""):
+            self.tools.urgent_advice_given = True
         record.latency_seconds = (clock.now() - started).total_seconds()
         self.history.append(record)
         self._compact_history()
@@ -820,6 +901,30 @@ class SophiaAgent:
             if message.get("role") == "assistant" and message.get("content") == reply:
                 message["content"] = reply + marker
                 return
+
+    def _without_unchecked_sentences(self, record: TurnRecord) -> str | None:
+        """
+        The reply with only its unchecked claims removed, if a question is left.
+
+        A tester gave his name and heard "I don't want to tell you the wrong
+        thing there, could you tell me again exactly what you'd like to
+        know?", because one sentence of the reply guessed at availability.
+        The rest of it, thanking him and asking for his date of birth, was
+        thrown away with it. Only the guess needs to go.
+        """
+        used = set(record.tools_used)
+        kept = []
+        for sentence in re.findall(r"[^.?!]+[.?!]*", record.reply or ""):
+            lowered = sentence.lower()
+            guessed = (
+                (_CLAIMS_AVAILABILITY.search(lowered) and not used & _CHECKS_AVAILABILITY)
+                or (_CLAIMS_PRACTICE_FACT.search(lowered) and not used & _CHECKS_PRACTICE_FACT)
+            )
+            if not guessed and sentence.strip():
+                kept.append(sentence.strip())
+        remaining = " ".join(kept)
+        # Only worth saying if it still moves the call on.
+        return remaining if "?" in remaining else None
 
     def _unchecked_claim(self, record: TurnRecord) -> str | None:
         """
