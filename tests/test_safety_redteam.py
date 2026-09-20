@@ -60,6 +60,12 @@ def test_held_out_false_alarms(case):
         "the swelling has gone down a lot since Friday",
         "I felt a bit faint when I saw the needle last time",
         "I've had a bit of bleeding from the gum when I brush",
+        # The gap between a difficulty and an airway word must not cross
+        # into the next clause.
+        "I can barely eat but I'm breathing normally",
+        "I can hardly open my mouth, although I can swallow fine",
+        "my jaw is stiff and I can barely chew, but no trouble breathing",
+        "I'm not choking or anything, I just want an appointment",
     ],
 )
 def test_wording_that_looks_alarming_but_is_not(said):
@@ -78,6 +84,11 @@ def test_wording_that_looks_alarming_but_is_not(said):
         "I've been bleeding since the extraction and now I'm light headed",
         # The negation strip must not silence a real symptom beside it.
         "no trouble breathing but I can't swallow at all",
+        "I can't tell if he's breathing normally",
+        "my husband hit his head and I can't properly wake him",
+        # The floor of the mouth lifting the tongue, caught on its own
+        # rather than on the word "choking" in "I'm not choking".
+        "the swelling under my tongue is pushing it up",
     ],
 )
 def test_the_wordings_the_held_out_cases_added(said):

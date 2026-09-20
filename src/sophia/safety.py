@@ -107,10 +107,18 @@ _AIRWAY = rf"breathe|breathing|breath|swallow|swallowing|speak{_BUSY}|speaking{_
 # counts, however it is worded.
 _NOT_ABOUT_SOPHIA = r"(?<!\byou )(?:{struggle})(?!\s+you\b)"
 
+# The few words allowed between a difficulty and the thing that is
+# difficult. They may not cross into the next clause, because a held out
+# caller said "I can barely eat, but I'm breathing normally" and the gap
+# read it as "barely ... breathing" and called an ambulance. Punctuation
+# is already stripped by then, so the conjunction is the only boundary
+# left to go on.
+_GAP = r"((?!but\b|and\b|although\b|though\b|however\b|whereas\b)[\w']+\s+){0,3}"
+
 BREATHING = (
     # The gap allows apostrophes: a parent said "I can't tell if he's
     # breathing normally", and "he's" stopped \w+ from matching.
-    rf"{_NOT_ABOUT_SOPHIA.format(struggle=_STRUGGLE)}\s+([\w']+\s+){{0,3}}({_AIRWAY})|"
+    rf"{_NOT_ABOUT_SOPHIA.format(struggle=_STRUGGLE)}\s+{_GAP}({_AIRWAY})|"
     r"can'?t catch my breath|short of breath|gasping|"
     r"closing (up|over)|throat.*clos|airway|"
     # Held out cases. "Can't seem to get a proper breath in" put five
@@ -130,7 +138,15 @@ SPREADING_SWELLING = (
     r"(swell\w*|lump)[^.]{0,60}\bspread\w*\b|"
     r"\bspread\w*\b[^.]{0,40}(down|into|to)( my| the)? (neck|throat|eye|chest)|"
     r"swelling.{0,40}(up to|under|around|near)( my| the)? eye|"
-    r"(swell\w*|lump)[^.]{0,60}(getting|growing) (bigger|worse) (really |very )?(fast|quickly)"
+    r"(swell\w*|lump)[^.]{0,60}(getting|growing) (bigger|worse)"
+    r"( really| very| pretty| quite| so)? (fast|quickly)|"
+    # Swelling in the floor of the mouth pushes the tongue up before it
+    # reaches the airway. A held out caller described exactly that while
+    # saying she was not choking, and only the word "choking" caught it.
+    r"tongue[^.]{0,40}(pushed|lifted|raised|forced) (up|upwards|back)|"
+    r"swell\w*[^.]{0,30}under(neath)? (my |the )?tongue|"
+    r"under(neath)? (my |the )?tongue[^.]{0,40}swell\w*|"
+    r"(floor of my mouth|under my chin)[^.]{0,40}swell\w*"
 )
 
 SWELLING = (
@@ -139,7 +155,7 @@ SWELLING = (
 )
 
 EYE = (
-    rf"({_STRUGGLE})\s+(\w+\s+){{0,3}}open\s+(my\s+|one\s+|the\s+)?eye|"
+    rf"({_STRUGGLE})\s+{_GAP}open\s+(my\s+|one\s+|the\s+)?eye|"
     r"eye (is )?(closed|shut)|eye.*swollen (shut|closed)|"
     r"swollen.*eye|shut my eye|eye has closed"
 )
@@ -169,7 +185,7 @@ BLEEDING = (
 DROWSY_AFTER_INJURY = (
     r"(fell (down|off|over)|fall(en)? (down|off|over)|hit|knock\w*|bang\w*|"
     r"accident|injur\w*|smash\w*)"
-    r"[^.]{0,90}(sleep(y|ier)|drowsy|hard to (keep|wake)|"
+    r"[^.]{0,170}(sleep(y|ier)|drowsy|hard to (keep|wake)|"
     r"can'?t keep (him|her|them|me) awake|"
     r"keeps? (falling|drifting) (asleep|off)|going in and out of it)"
 )
@@ -190,7 +206,7 @@ _UNRESPONSIVE = (
     rf"\b{_PERSON}(?:'?s)?\b(?:\s+\w+){{0,5}}\s+(?:isn'?t|is not|not|won'?t)\s+respond(ing|ed)?|"
     rf"\b{_PERSON}(?:'?s)?\b(?:\s+\w+){{0,5}}\s+unresponsive|"
     r"gone (all )?floppy|floppy and|"
-    r"won'?t wake (up|him|her|them)|can'?t wake (him|her|them|my)"
+    r"won'?t wake (up|him|her|them)|can'?t\s+(\w+\s+){0,2}wake\s+(him|her|them|my)"
 )
 
 HEAD_INJURY = (
@@ -305,7 +321,7 @@ def _matches(pattern: str, text: str) -> bool:
 # blanked everything after a "not" would break it.
 _DENIED_DIFFICULTY = re.compile(
     r"\b(?:no|not|never)\s+(?:\w+\s+){0,2}"
-    r"(?:trouble|difficulty|difficulties|problem|problems|issue|issues)\b",
+    r"(?:trouble|difficulty|difficulties|problem|problems|issue|issues|choking)\b",
     re.IGNORECASE,
 )
 

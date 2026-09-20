@@ -269,6 +269,137 @@ CASES: tuple[Case, ...] = (
             "this wrong."
         ),
     ),
+    # ------------------------------------------------------------------
+    # Batch 3. Emergencies described by someone playing them down, and
+    # non emergencies described by someone frightened. The words point
+    # the wrong way in both halves.
+    # ------------------------------------------------------------------
+    Case(
+        ref="A11",
+        said=(
+            "I'm not sure if this counts as breathing trouble because I can "
+            "breathe, sort of, but it feels like my throat is getting tighter "
+            "and the swelling under my jaw is definitely moving down my neck."
+        ),
+        expected_999=True,
+        source="batch 3",
+        note="A tightening throat and swelling on the move, hedged throughout.",
+    ),
+    Case(
+        ref="A12",
+        said=(
+            "My husband hit his face pretty hard and there's blood coming "
+            "from his mouth, he's talking normally and says he's fine, but he "
+            "keeps drifting off and I can't properly wake him for more than a "
+            "few seconds."
+        ),
+        expected_999=True,
+        source="batch 3",
+        note="Cannot be roused after a head injury, reported by his wife.",
+    ),
+    Case(
+        ref="A13",
+        said=(
+            "I had a tooth removed earlier and it suddenly started pouring "
+            "blood again, I've been biting on gauze for about half an hour "
+            "and it's still filling my mouth, and now I feel dizzy."
+        ),
+        expected_999=True,
+        source="batch 3",
+        note="Heavy bleeding that pressure has not stopped, with dizziness.",
+    ),
+    Case(
+        ref="A14",
+        said=(
+            "I've got a really bad infection I think, my cheek is swollen and "
+            "my temperature feels really high, but the weird thing is I'm not "
+            "actually in much pain, now my eyelid is starting to swell too."
+        ),
+        expected_999=True,
+        source="batch 3",
+        note=(
+            "Swelling reaching the eye with a fever. The caller offers low "
+            "pain as reassurance, which is the opposite of reassuring."
+        ),
+    ),
+    Case(
+        ref="A15",
+        said=(
+            "I can swallow water but it feels like I have to concentrate on "
+            "it, and my tongue feels pushed upwards by this swelling "
+            "underneath it, I'm not choking or anything, but it's getting "
+            "worse pretty quickly."
+        ),
+        expected_999=True,
+        source="batch 3",
+        note=(
+            "Swelling in the floor of the mouth lifting the tongue. Note the "
+            "words 'not choking': a rule that matches on 'choking' would get "
+            "this right for the wrong reason."
+        ),
+    ),
+    Case(
+        ref="B11",
+        said=(
+            "My face is swollen and I look like I've got a second cheek, and "
+            "yeah it hurts like hell, but I can breathe, swallow and talk "
+            "normally, can you just get me in today?"
+        ),
+        expected_999=False,
+        source="batch 3",
+        note="Big swelling, every airway sign explicitly ruled out.",
+    ),
+    Case(
+        ref="B12",
+        said=(
+            "I'm bleeding after having a tooth out and it looks absolutely "
+            "terrifying because there's blood all over the tissue, but when I "
+            "actually check it's only a little bit at a time and I feel "
+            "completely normal."
+        ),
+        expected_999=False,
+        source="batch 3",
+        note="Frightening words, small amount of blood, no faintness.",
+    ),
+    Case(
+        ref="B13",
+        said=(
+            "My wisdom tooth has made my jaw so stiff I can hardly open my "
+            "mouth, I'm starting to freak out a bit because I can barely eat, "
+            "but I'm breathing normally and I can swallow."
+        ),
+        expected_999=False,
+        source="batch 3",
+        note=(
+            "A stiff jaw is a warning sign worth seeing today, and 'hardly' "
+            "and 'barely' are both difficulty words with no airway behind "
+            "them."
+        ),
+    ),
+    Case(
+        ref="B14",
+        said=(
+            "I woke up with half my face numb and thought I was having some "
+            "kind of emergency, but I had an injection at the dentist "
+            "yesterday and there's no weakness anywhere else and I can smile "
+            "normally."
+        ),
+        expected_999=False,
+        source="batch 3",
+        note="Numbness after an injection, with stroke signs ruled out.",
+    ),
+    Case(
+        ref="B15",
+        said=(
+            "The pain suddenly disappeared after being unbearable for two "
+            "days, which sounds good but honestly it scares me because the "
+            "tooth has started tasting horrible and there's some fluid coming "
+            "out of it, I'm otherwise completely okay."
+        ),
+        expected_999=False,
+        source="batch 3",
+        note="An abscess that has burst. Needs seeing today, not an ambulance.",
+    ),
 )
 
 
