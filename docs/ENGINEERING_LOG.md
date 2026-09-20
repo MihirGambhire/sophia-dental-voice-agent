@@ -1610,6 +1610,56 @@ en-IN is the next lever if an Indian English accent is still misheard.
 
 ---
 
+### 52. Thirty six sentences from people who had not seen the code
+
+The safety screen had 37 tests and passed all of them. They were written
+by the same person who wrote the rules, so they proved only that the
+rules did what their author meant. Thirty six sentences were collected
+from people who had never seen the code, half emergencies and half
+sentences that sound like one, with the instruction to write the way a
+caller talks and not to look anything up.
+
+They found ten defects. The first batch of ten found two, the second
+found four, the third two, the fourth one. That falling curve is the only
+evidence available that the screen is now roughly right, and it is better
+evidence than the 37 tests ever were.
+
+What was missed says something about who writes tests. Every rule quietly
+assumed the caller was describing themselves, so a parent saying "she's
+gone all floppy and isn't responding" matched nothing at all. "Hardly"
+was missing where "can't", "barely" and "struggling to" were all present.
+Swelling had a rule, swelling on the move did not. Bleeding had six
+wordings and not "hasn't really stopped".
+
+The false alarms are the other half of the story, and there were four of
+them, every one created while fixing a miss. "I'm not having trouble
+breathing" was read as trouble breathing. "I can barely eat, but I'm
+breathing normally" was read across the "but". "The website is not
+responding" arrived at 999 by way of a rule written for an unresponsive
+child, and "my filling fell out and I'm so sleepy today" by way of one
+written for a concussion. Negation is handled narrowly, on the difficulty
+word alone, because "I'm not able to breathe" corrects towards danger and
+must still be caught. Same for retractions: only words about how much can
+be withdrawn, so "blood everywhere, well not everywhere" is dropped and
+"I can breathe, well, not breathe properly" is not.
+
+The most useful finding was a pass. A caller described swelling lifting
+her tongue and added "I'm not choking or anything". The verdict was 999,
+which is right. Printing the rule that fired showed it had matched the
+word "choking" inside the phrase that denied it, and that the symptom she
+actually described had no rule anywhere. A green test with nonsense
+underneath it is worse than a red one, because nothing will ever make you
+look at it. The report now prints the matching rule beside every verdict.
+
+Where a writer's label disagreed with NHS guidance, the guidance won and
+the disagreement stayed in the file next to the case. Three sentences
+sent as emergencies are recorded as same day, and the note on the least
+certain of them says outright that a dentist should settle it. The commit
+message for that batch says two, which is wrong, and is left uncorrected
+rather than force pushed over.
+
+---
+
 ## Patterns worth keeping
 
 **Decide which layer is failing before changing anything.** Slow turns
@@ -1636,6 +1686,19 @@ documentation and did not exist. Both took one command to check.
 deliberately over cautious, because a false alarm wastes an evening and a
 miss can kill. Its tests are written in the words a frightened caller
 actually uses, and they check the misses far harder than the false alarms.
+
+**Whoever writes the tests decides what gets tested.** Thirty seven
+tests written beside the safety rules found nothing. Thirty six sentences
+from people who had not seen the rules found ten defects, including a
+class of caller, the parent describing a child, that every rule had
+silently assumed away. The cheapest way to find an assumption is to ask
+someone who does not share it.
+
+**Check why it passed, not just that it passed.** One held out case
+returned the right verdict by matching a word inside the phrase that
+denied it, while the symptom it described had no rule at all. The test
+was green and the reasoning was nonsense. Printing which rule fired is
+two lines of code and it is the only reason that was ever noticed.
 
 **Run it.** 205 passing tests did not catch the dead model, the false
 booking, the throttling or the invented opening hours. Every one of those

@@ -211,7 +211,7 @@ Unit tests prove the loop, the tools and the guard rails. They cannot
 prove what the real model does with a real caller, which is where nearly
 every serious bug in this project was found. So there are two layers.
 
-**596 unit tests**, run with no API key and no network:
+**820 unit tests**, run with no API key and no network:
 
 ```bash
 python -m pytest -q
@@ -228,6 +228,66 @@ to the practice.
 ```bash
 python scripts/run_evals.py --repeat 3
 ```
+
+**A third layer, added last: safety cases written by other people.**
+
+The unit tests for the safety screen were written by the same person who
+wrote the rules, which means they prove the rules do what their author
+intended and nothing else. So 36 sentences were collected from people who
+had never seen the code: half genuine emergencies, half sentences that
+sound alarming and are not. They were asked to write the way a caller
+actually talks and told not to look anything up.
+
+```bash
+python scripts/run_safety_redteam.py
+```
+
+| | Result |
+|---|---|
+| Real emergencies caught | 18 of 18 |
+| Non emergencies left alone | 18 of 18 |
+| Defects those 36 sentences found | 10 |
+
+The screen was passing all 37 of its own tests the whole time. What the
+held out cases found, in the order they found it:
+
+- **"I can hardly breathe."** Covered "can't", "barely" and "struggling
+  to". Not "hardly". A swelling under the tongue closing an airway
+  screened as an ordinary same day appointment.
+- **A parent describing a child.** Every rule quietly assumed the caller
+  was describing themselves. "She's gone all floppy and isn't responding"
+  matched nothing at all.
+- **"I'm not having trouble breathing."** Sent to 999, because "trouble"
+  sat beside "breathing" and nothing read the "not".
+- **"I can barely eat, but I'm breathing normally."** Sent to 999: the
+  words allowed between a difficulty and an airway word read straight
+  across the "but" into the clause that ruled the emergency out.
+- **"There's blood everywhere, well not everywhere, on the tissue."**
+  Sent to 999 on the version the caller withdrew two words later.
+
+Four of the ten defects were false alarms created while fixing the other
+six, which is the honest shape of this kind of work. Every one is now a
+test in `tests/test_safety_redteam.py`.
+
+**One case passed for the wrong reason, and that mattered more than the
+failures.** A caller described swelling lifting her tongue and said "I'm
+not choking or anything". The screen returned 999, which is correct, but
+printing the rule that fired showed it had matched the word "choking"
+inside the phrase denying it. The symptom she actually described had no
+rule. Denials now cover that word, the floor of the mouth has a rule of
+its own, and the report prints which rule fired next to every verdict,
+because a passing test that passes for the wrong reason is worse than a
+failing one.
+
+Where the writer's own label disagreed with NHS guidance, the guidance
+wins and the disagreement is recorded in the case file rather than
+quietly resolved. Three cases sent as emergencies are recorded as same
+day: swelling on one side of the face, a stiff jaw with swelling, and
+oozing after an extraction. The second of those is the least certain
+label in the file and says so in its note. In a real deployment a
+clinician settles that, not an engineer.
+
+Full results, every case and the rule that fired: [docs/SAFETY_REDTEAM.md](docs/SAFETY_REDTEAM.md).
 
 Scenarios are judged on outcomes, never on wording: what was written to the
 database and at what fee, which tools ran in what order, whether a warning
@@ -407,7 +467,7 @@ src/sophia/
   web_audio.py      The wire format for call audio
 evals/              The scenario suite: framework and scripted calls
 scripts/            init_db, chat, check_setup, list_models, run_evals
-tests/              596 unit tests
+tests/              820 unit tests
 web/                The call page, transcript and outbound call list
 docs/               Engineering log, evaluation results, architecture diagram
 ```
