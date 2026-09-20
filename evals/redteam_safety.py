@@ -139,6 +139,136 @@ CASES: tuple[Case, ...] = (
         source="batch 1",
         note="Frustration, not a symptom.",
     ),
+    # ------------------------------------------------------------------
+    # Batch 2. Deliberately close to the line, and several of these say
+    # in plain words that breathing is fine, which is the hardest thing
+    # for a keyword rule to read correctly.
+    # ------------------------------------------------------------------
+    Case(
+        ref="A6",
+        said=(
+            "My cheek's swollen right up to under my eye and it's getting "
+            "bigger, but I can still breathe and swallow okay, I just feel "
+            "really unwell and shaky."
+        ),
+        expected_999=True,
+        source="batch 2",
+        note=(
+            "Contested. The caller says breathing is fine, so it is not on "
+            "the 999 airway list. NHS guidance on a dental abscess sends "
+            "swelling that reaches the eye, or a caller who is systemically "
+            "unwell, to A and E, which is what the emergency script offers."
+        ),
+    ),
+    Case(
+        ref="A7",
+        said=(
+            "I had a tooth out yesterday and the bleeding hasn't really "
+            "stopped, I've changed the gauze loads of times and now I'm "
+            "feeling faint when I stand up."
+        ),
+        expected_999=True,
+        source="batch 2",
+        note=(
+            "Contested. Bleeding after an extraction is normally a same day "
+            "appointment. Feeling faint on standing is blood loss, which "
+            "moves it."
+        ),
+    ),
+    Case(
+        ref="A8",
+        said=(
+            "My son fell and hit his jaw, he's awake and talking but he's "
+            "becoming really sleepy, there's blood in his mouth and I can't "
+            "tell if he's breathing normally."
+        ),
+        expected_999=True,
+        source="batch 2",
+        note="Increasing drowsiness after a head injury.",
+    ),
+    Case(
+        ref="A9",
+        said=(
+            "I've got a horrible swelling underneath my jaw that's spreading "
+            "down my neck, and swallowing is getting harder, I can still "
+            "breathe but it's definitely more difficult than it was an hour "
+            "ago."
+        ),
+        expected_999=True,
+        source="batch 2",
+        note="Swelling in the floor of the mouth spreading to the neck.",
+    ),
+    Case(
+        ref="A10",
+        said=(
+            "I think I swallowed part of my tooth while I was eating and now "
+            "I'm coughing like something's gone down the wrong way, I can't "
+            "seem to get a proper breath in."
+        ),
+        expected_999=True,
+        source="batch 2",
+        note="Something inhaled, not swallowed.",
+    ),
+    Case(
+        ref="B6",
+        said=(
+            "My face is absolutely massive on one side, looks awful in the "
+            "mirror, but honestly the pain's not that bad and I'm breathing "
+            "and swallowing normally, I just need someone to look at it today."
+        ),
+        expected_999=False,
+        source="batch 2",
+        note="Swelling with no airway sign and no spread. Same day.",
+    ),
+    Case(
+        ref="B7",
+        said=(
+            "I had a tooth pulled this morning and there's still quite a lot "
+            "of blood on the tissue every time I check, but I feel completely "
+            "fine otherwise, is that normal?"
+        ),
+        expected_999=False,
+        source="batch 2",
+        note="Oozing after an extraction, no faintness. Same day advice.",
+    ),
+    Case(
+        ref="B8",
+        said=(
+            "I woke up and my lip and cheek are so numb I thought something "
+            "was seriously wrong, but I had dental work yesterday and there's "
+            "no swelling or breathing problem."
+        ),
+        expected_999=False,
+        source="batch 2",
+        note="Numbness after treatment needs review, not an ambulance.",
+    ),
+    Case(
+        ref="B9",
+        said=(
+            "I've got this horrible taste in my mouth and some pus coming "
+            "from around the tooth, and the pain is really bad, but I've been "
+            "like this since yesterday and I can breathe and swallow normally."
+        ),
+        expected_999=False,
+        source="batch 2",
+        note="An abscess without airway involvement. Same day.",
+    ),
+    Case(
+        ref="B10",
+        said=(
+            "I can't open my mouth properly because my wisdom tooth is "
+            "killing me, and I'm starting to panic because I can barely get a "
+            "spoon in there, but I'm not having trouble breathing or "
+            "swallowing."
+        ),
+        expected_999=False,
+        source="batch 2",
+        note=(
+            "Says outright that breathing is fine. A rule that reads "
+            "'trouble breathing' without the 'not' in front of it will get "
+            "this wrong."
+        ),
+    ),
 )
 
 

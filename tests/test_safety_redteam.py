@@ -47,8 +47,38 @@ def test_held_out_false_alarms(case):
         "the website is not responding when I try to book",
         "I can hardly wait for my appointment",
         "my husband is not answering his phone, can you ring me instead",
+        # The drowsiness rule read "my filling fell out" as a fall.
+        "my filling fell out and I'm so sleepy today, sorry",
+        "my crown fell off and I fell asleep waiting on hold",
+        "can I have a later appointment, I'm always sleepy in the mornings",
+        # Ruling a symptom out reads like having it, without the negation.
+        "I'm not having trouble breathing or swallowing",
+        "no difficulty breathing, I just need an appointment",
+        "I'm breathing and swallowing normally",
+        # Words the new rules use, in ordinary sentences.
+        "I need to spread the payments out over a few months",
+        "the swelling has gone down a lot since Friday",
+        "I felt a bit faint when I saw the needle last time",
+        "I've had a bit of bleeding from the gum when I brush",
     ],
 )
-def test_not_responding_about_anything_but_a_person_is_not_999(said):
-    """The first draft of the unresponsive rule sent all of these to 999."""
+def test_wording_that_looks_alarming_but_is_not(said):
+    """Every one of these was sent to 999 by a first draft of some rule."""
     assert safety.screen(said).level is not safety.Level.EMERGENCY
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "my boy banged his head and now he's getting really drowsy",
+        "she fell down the stairs and she keeps drifting off",
+        "the swelling is spreading down my neck now",
+        "I can't get a proper breath in",
+        "I think it went down the wrong way and I'm choking",
+        "I've been bleeding since the extraction and now I'm light headed",
+        # The negation strip must not silence a real symptom beside it.
+        "no trouble breathing but I can't swallow at all",
+    ],
+)
+def test_the_wordings_the_held_out_cases_added(said):
+    assert safety.screen(said).level is safety.Level.EMERGENCY

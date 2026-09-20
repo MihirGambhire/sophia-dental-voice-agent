@@ -108,9 +108,29 @@ _AIRWAY = rf"breathe|breathing|breath|swallow|swallowing|speak{_BUSY}|speaking{_
 _NOT_ABOUT_SOPHIA = r"(?<!\byou )(?:{struggle})(?!\s+you\b)"
 
 BREATHING = (
-    rf"{_NOT_ABOUT_SOPHIA.format(struggle=_STRUGGLE)}\s+(\w+\s+){{0,3}}({_AIRWAY})|"
+    # The gap allows apostrophes: a parent said "I can't tell if he's
+    # breathing normally", and "he's" stopped \w+ from matching.
+    rf"{_NOT_ABOUT_SOPHIA.format(struggle=_STRUGGLE)}\s+([\w']+\s+){{0,3}}({_AIRWAY})|"
     r"can'?t catch my breath|short of breath|gasping|"
-    r"closing (up|over)|throat.*clos|airway"
+    r"closing (up|over)|throat.*clos|airway|"
+    # Held out cases. "Can't seem to get a proper breath in" put five
+    # words between the difficulty and the breath, which is past what the
+    # gap allows, and choking had no rule at all.
+    r"can'?t (seem to |manage to )?(get|catch|take) (a|my|any)( proper| full| deep)? ?(breath|air)|"
+    r"down the wrong way|gone down my windpipe|breathed it in|inhaled it|chok(e|ing)|"
+    # Getting worse, rather than already impossible.
+    r"(swallow|breath)(e|ing)?\s+(is\s+)?(getting|becoming)\s+(harder|more difficult|difficult)|"
+    r"(getting|becoming) (harder|more difficult|difficult) to (swallow|breathe)"
+)
+
+# Swelling that is moving is an emergency before it reaches the airway,
+# which is why a caller can truthfully say breathing is still fine and
+# still need to be seen tonight rather than tomorrow.
+SPREADING_SWELLING = (
+    r"(swell\w*|lump)[^.]{0,60}\bspread\w*\b|"
+    r"\bspread\w*\b[^.]{0,40}(down|into|to)( my| the)? (neck|throat|eye|chest)|"
+    r"swelling.{0,40}(up to|under|around|near)( my| the)? eye|"
+    r"(swell\w*|lump)[^.]{0,60}(getting|growing) (bigger|worse) (really |very )?(fast|quickly)"
 )
 
 SWELLING = (
@@ -130,7 +150,28 @@ BLEEDING = (
     r"bleeding heavily|pouring (with )?blood|lots of blood|"
     r"bleeding for (hours|ages)|soaked through|"
     # How a parent describes it: "she's bleeding everywhere".
-    r"blood everywhere|bleeding everywhere|covered in blood|bleeding loads"
+    r"blood everywhere|bleeding everywhere|covered in blood|bleeding loads|"
+    # "Hasn't really stopped" is how a held out caller put it, a day after
+    # an extraction, and none of the "won't stop" wordings covered it.
+    r"bleed\w*[^.]{0,30}(hasn'?t|has not|still hasn'?t)( really| properly)? stopped|"
+    # Bleeding plus feeling faint is blood loss, not anxiety. Feeling
+    # faint on its own is left to the urgent rules.
+    r"(bleed\w*|blood)[^.]{0,80}(feeling faint|gone faint|light ?headed|"
+    r"dizzy when i stand|faint when i stand)|"
+    r"(feeling faint|light ?headed|dizzy)[^.]{0,80}(bleed\w*|blood)"
+)
+
+# A head injury that is getting worse rather than better. Drowsiness on
+# its own means nothing, so it only counts alongside the injury.
+# "Fell" on its own is not an injury in a dental call: things fall out of
+# teeth. "My filling fell out and I'm so sleepy today" was sent to 999 by
+# the first draft, so a fall has to be a fall down, off or over.
+DROWSY_AFTER_INJURY = (
+    r"(fell (down|off|over)|fall(en)? (down|off|over)|hit|knock\w*|bang\w*|"
+    r"accident|injur\w*|smash\w*)"
+    r"[^.]{0,90}(sleep(y|ier)|drowsy|hard to (keep|wake)|"
+    r"can'?t keep (him|her|them|me) awake|"
+    r"keeps? (falling|drifting) (asleep|off)|going in and out of it)"
 )
 
 # Someone who is not responding needs an ambulance whoever is describing
@@ -225,6 +266,8 @@ EMERGENCY_RULES: tuple[tuple[str, str], ...] = (
     ("eye_closing", EYE),
     ("uncontrolled_bleeding", BLEEDING),
     ("head_injury", HEAD_INJURY),
+    ("drowsy_after_injury", DROWSY_AFTER_INJURY),
+    ("spreading_swelling", SPREADING_SWELLING),
     ("facial_injury", FACIAL_INJURY),
     ("allergic_reaction", ALLERGY),
 )
@@ -250,9 +293,28 @@ def _matches(pattern: str, text: str) -> bool:
     return re.search(pattern, text, re.IGNORECASE) is not None
 
 
+# A caller who rules a symptom out uses the same words as one who has it.
+# A held out case said "I'm not having trouble breathing or swallowing"
+# and was sent to 999, because "trouble" sat next to "breathing" and
+# nothing read the "not".
+#
+# Only the difficulty word is removed, and only when it is the one being
+# denied, so "no trouble breathing but I can't swallow" still leaves
+# "can't swallow" to be caught. Negation is deliberately not handled in
+# general: "I'm not able to breathe" must keep working, and a rule that
+# blanked everything after a "not" would break it.
+_DENIED_DIFFICULTY = re.compile(
+    r"\b(?:no|not|never)\s+(?:\w+\s+){0,2}"
+    r"(?:trouble|difficulty|difficulties|problem|problems|issue|issues)\b",
+    re.IGNORECASE,
+)
+
+
 def _normalise(text: str) -> str:
     """Lower case, collapse whitespace, and strip most punctuation."""
-    return re.sub(r"\s+", " ", re.sub(r"[^\w\s']", " ", (text or "").lower())).strip()
+    cleaned = re.sub(r"[^\w\s']", " ", (text or "").lower())
+    cleaned = _DENIED_DIFFICULTY.sub(" ", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
 
 
 def screen(text: str) -> Screening:
