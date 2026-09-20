@@ -400,6 +400,102 @@ CASES: tuple[Case, ...] = (
         source="batch 3",
         note="An abscess that has burst. Needs seeing today, not an ambulance.",
     ),
+    # ------------------------------------------------------------------
+    # Batch 4. Real phone speech: rambling, self correcting, trailing
+    # off. All six were sent as emergencies. Two are labelled here as
+    # same day instead, with the reasoning written out, because the
+    # screen follows NHS guidance rather than the writer's guess.
+    # ------------------------------------------------------------------
+    Case(
+        ref="A16",
+        said=(
+            "Um yeah, hi, sorry, I'm parked outside but I can't find the "
+            "entrance and I've been driving around for like ten minutes, "
+            "anyway, my face has gone massive on one side and I think it's "
+            "getting bigger, I don't know if that's bad or"
+        ),
+        expected_999=False,
+        source="batch 4",
+        note=(
+            "Sent as an emergency, recorded as same day. Swelling on its own "
+            "is urgent under NHS guidance. It becomes a 999 with difficulty "
+            "breathing, an eye closing, or spread to the neck, and none of "
+            "those is here. The symptom that matters arrives after twenty "
+            "seconds of parking, which is the real test."
+        ),
+    ),
+    Case(
+        ref="A17",
+        said=(
+            "I don't really know how to explain this, my tooth came out, well "
+            "most of it did, there was loads of blood and now I'm feeling a "
+            "bit funny, like lightheaded, hang on, yeah no I'm alright, "
+            "probably."
+        ),
+        expected_999=True,
+        source="batch 4",
+        note="Blood loss, then talked down to 'probably' alright.",
+    ),
+    Case(
+        ref="A18",
+        said=(
+            "Hi, yeah, basically my son fell over, not badly I don't think, "
+            "he's talking and everything, but there's blood in his mouth and "
+            "he's gone really sleepy and keeps sort of nodding off, can "
+            "someone just tell me what I'm supposed to do?"
+        ),
+        expected_999=True,
+        source="batch 4",
+        note="The fall is played down, the drowsiness is the emergency.",
+    ),
+    Case(
+        ref="A19",
+        said=(
+            "Sorry, I'm going to sound stupid, but I can't swallow properly, "
+            "well I can swallow, it's just, like, harder than before, and "
+            "there's this lump under my tongue that's getting bigger. I'm "
+            "breathing okay though. I think. Yeah, I think I am."
+        ),
+        expected_999=True,
+        source="batch 4",
+        note="Says it, takes it back, says it again. The lump is the finding.",
+    ),
+    Case(
+        ref="A20",
+        said=(
+            "My jaw is killing me and my face is swollen and I can't open my "
+            "mouth properly, which is, you know, really annoying because I've "
+            "got work in an hour, but yeah, no, I'm not choking or anything, "
+            "I just need a dentist."
+        ),
+        expected_999=False,
+        source="batch 4",
+        note=(
+            "The least certain label in this file. A stiff jaw with facial "
+            "swelling can mean an infection spreading, and some guidance "
+            "sends it to hospital. NHS dental guidance does not without an "
+            "airway sign, an eye closing or spread to the neck, and B10 and "
+            "B13 are the same picture labelled same day. A dentist should "
+            "settle this one, not this file."
+        ),
+    ),
+    Case(
+        ref="A21",
+        said=(
+            "Yeah hi, sorry, I've been trying to call for ages. Basically "
+            "there's blood everywhere, well not everywhere, on the tissue, "
+            "and my mouth tastes like metal, and I had the tooth out "
+            "yesterday, so, do I come in or is this just normal?"
+        ),
+        expected_999=False,
+        source="batch 4",
+        note=(
+            "Sent as an emergency, recorded as same day: the caller withdraws "
+            "'everywhere' in the next breath and describes oozing on a "
+            "tissue. A rule that reads the first version and not the "
+            "correction will call an ambulance."
+        ),
+    ),
 )
 
 

@@ -1,13 +1,13 @@
 # Safety screen, tested on held out cases
 
-Run on 20 September 2026 at 10:59 UK time by `scripts/run_safety_redteam.py`.
+Run on 20 September 2026 at 11:05 UK time by `scripts/run_safety_redteam.py`.
 
 These sentences were written by people who had never seen the rules, the code or the practice data. They were asked for emergencies and for sentences that sound alarming but are not, and told to write the way a caller actually talks. Expected outcomes follow NHS guidance, not the writer's guess.
 
 ## Result
 
-- Real emergencies caught: **15 of 15**
-- Non emergencies left alone: **15 of 15**
+- Real emergencies caught: **18 of 18**
+- Non emergencies left alone: **18 of 18**
 
 A miss is a caller who needed an ambulance and was offered an appointment. A false alarm is a caller told to ring 999 about a filling. The screen is deliberately tuned to prefer the second.
 
@@ -53,3 +53,9 @@ None on this set.
 | B13 | not 999 | `routine` | My wisdom tooth has made my jaw so stiff I can hardly open my mouth, I'm starting to freak out a bit because I can barely eat, but I'm breathing normally and I can swallow. |
 | B14 | not 999 | `routine` | I woke up with half my face numb and thought I was having some kind of emergency, but I had an injection at the dentist yesterday and there's no weakness anywhere else and I can smile normally. |
 | B15 | not 999 | `urgent_same_day` | The pain suddenly disappeared after being unbearable for two days, which sounds good but honestly it scares me because the tooth has started tasting horrible and there's some fluid coming out of it, I'm otherwise completely okay. |
+| A16 | not 999 | `routine` | Um yeah, hi, sorry, I'm parked outside but I can't find the entrance and I've been driving around for like ten minutes, anyway, my face has gone massive on one side and I think it's getting bigger, I don't know if that's bad or |
+| A17 | 999 | `emergency_999` | I don't really know how to explain this, my tooth came out, well most of it did, there was loads of blood and now I'm feeling a bit funny, like lightheaded, hang on, yeah no I'm alright, probably. |
+| A18 | 999 | `emergency_999` | Hi, yeah, basically my son fell over, not badly I don't think, he's talking and everything, but there's blood in his mouth and he's gone really sleepy and keeps sort of nodding off, can someone just tell me what I'm supposed to do? |
+| A19 | 999 | `emergency_999` | Sorry, I'm going to sound stupid, but I can't swallow properly, well I can swallow, it's just, like, harder than before, and there's this lump under my tongue that's getting bigger. I'm breathing okay though. I think. Yeah, I think I am. |
+| A20 | not 999 | `urgent_same_day` | My jaw is killing me and my face is swollen and I can't open my mouth properly, which is, you know, really annoying because I've got work in an hour, but yeah, no, I'm not choking or anything, I just need a dentist. |
+| A21 | not 999 | `routine` | Yeah hi, sorry, I've been trying to call for ages. Basically there's blood everywhere, well not everywhere, on the tissue, and my mouth tastes like metal, and I had the tooth out yesterday, so, do I come in or is this just normal? |

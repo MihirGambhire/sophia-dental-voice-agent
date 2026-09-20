@@ -128,7 +128,14 @@ BREATHING = (
     r"down the wrong way|gone down my windpipe|breathed it in|inhaled it|chok(e|ing)|"
     # Getting worse, rather than already impossible.
     r"(swallow|breath)(e|ing)?\s+(is\s+)?(getting|becoming)\s+(harder|more difficult|difficult)|"
-    r"(getting|becoming) (harder|more difficult|difficult) to (swallow|breathe)"
+    r"(getting|becoming) (harder|more difficult|difficult) to (swallow|breathe)|"
+    # "I can breathe, well, not breathe properly": the correction is
+    # the symptom, and no difficulty word appears anywhere in it.
+    # Nothing may follow it: "I'm not swallowing my pride" is not an
+    # airway. Swallowing a thing, "I can't swallow my own saliva", is
+    # caught by the difficulty rule above instead.
+    r"\bnot\s+(really\s+|properly\s+)?(able to\s+)?(breathe|breathing|swallow|swallowing)\b"
+    r"(?!\s+(my|the|a|an|any|it|that|this|his|her|their)\b)"
 )
 
 # Swelling that is moving is an emergency before it reaches the airway,
@@ -319,6 +326,21 @@ def _matches(pattern: str, text: str) -> bool:
 # "can't swallow" to be caught. Negation is deliberately not handled in
 # general: "I'm not able to breathe" must keep working, and a rule that
 # blanked everything after a "not" would break it.
+# People correct themselves mid sentence, and on the phone the first
+# version is usually the dramatic one: "there's blood everywhere, well
+# not everywhere, on the tissue". Reading only the first half of that
+# sends an ambulance to someone with a stained tissue.
+#
+# Only words about how much are allowed to be withdrawn this way. A
+# retraction of a symptom is left alone on purpose, because "I can
+# breathe, well, not breathe properly" corrects towards danger, not away
+# from it, and must still be caught.
+_RETRACTED_AMOUNT = re.compile(
+    r"\b(everywhere|loads|lots|gushing|pouring|streaming|gallons|buckets)\b"
+    r"[^.]{0,30}?\bnot\s+\1\b",
+    re.IGNORECASE,
+)
+
 _DENIED_DIFFICULTY = re.compile(
     r"\b(?:no|not|never)\s+(?:\w+\s+){0,2}"
     r"(?:trouble|difficulty|difficulties|problem|problems|issue|issues|choking)\b",
@@ -329,6 +351,7 @@ _DENIED_DIFFICULTY = re.compile(
 def _normalise(text: str) -> str:
     """Lower case, collapse whitespace, and strip most punctuation."""
     cleaned = re.sub(r"[^\w\s']", " ", (text or "").lower())
+    cleaned = _RETRACTED_AMOUNT.sub(" ", cleaned)
     cleaned = _DENIED_DIFFICULTY.sub(" ", cleaned)
     return re.sub(r"\s+", " ", cleaned).strip()
 
