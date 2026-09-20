@@ -88,9 +88,13 @@ class Screening:
 # Up to three words are now allowed between the difficulty and the thing
 # being difficult, because that is how people actually speak when they
 # are frightened and playing it down.
+#
+# "hardly" was added after a held out case: "I can hardly breathe or
+# swallow now". "Can't" was covered and "can hardly" was not, so a swelling
+# under the tongue closing an airway screened as an ordinary urgent call.
 _STRUGGLE = (
     r"can'?t|cannot|couldn'?t|could not|hard to|difficult to|difficulty|"
-    r"struggling to|struggle to|trouble|unable to|barely"
+    r"struggling to|struggle to|trouble|unable to|barely|hardly"
 )
 # Speaking or talking counts unless it is about being busy: "I can't talk
 # right now, I'm at work" is not an airway problem.
@@ -124,12 +128,34 @@ BLEEDING = (
     r"bleeding (that )?(won'?t|will not) stop|won'?t stop bleeding|"
     r"cannot stop the bleeding|can'?t stop the bleeding|"
     r"bleeding heavily|pouring (with )?blood|lots of blood|"
-    r"bleeding for (hours|ages)|soaked through"
+    r"bleeding for (hours|ages)|soaked through|"
+    # How a parent describes it: "she's bleeding everywhere".
+    r"blood everywhere|bleeding everywhere|covered in blood|bleeding loads"
+)
+
+# Someone who is not responding needs an ambulance whoever is describing
+# them, and it is usually a parent describing a child rather than the
+# caller describing themselves.
+#
+# "Not responding" on its own is far too loose: a probe of this rule sent
+# "the website is not responding when I try to book" and "you are not
+# responding properly" to 999. A person has to be the subject, so the
+# phrase only counts within a few words of someone being talked about.
+_PERSON = (
+    r"(?:he|she|they|him|her|his|them|baby|child|kid|son|daughter|girl|boy|"
+    r"mum|mother|dad|father|wife|husband|partner|gran|nan|grandad|patient)"
+)
+_UNRESPONSIVE = (
+    rf"\b{_PERSON}(?:'?s)?\b(?:\s+\w+){{0,5}}\s+(?:isn'?t|is not|not|won'?t)\s+respond(ing|ed)?|"
+    rf"\b{_PERSON}(?:'?s)?\b(?:\s+\w+){{0,5}}\s+unresponsive|"
+    r"gone (all )?floppy|floppy and|"
+    r"won'?t wake (up|him|her|them)|can'?t wake (him|her|them|my)"
 )
 
 HEAD_INJURY = (
-    r"knocked out|passed out|blacked out|lost consciousness|unconscious|"
-    r"hit my head|banged my head|head injury|"
+    rf"knocked out|passed out|blacked out|lost consciousness|unconscious|{_UNRESPONSIVE}|"
+    # A parent rings about a child, so the possessive is not always "my".
+    r"hit (my|his|her|their|the) head|banged (my|his|her|their|the) head|head injury|"
     r"(been|being) sick.*(after|since).*(hit|fall|accident)|"
     r"double vision|seeing double|vision.*blurr"
 )
