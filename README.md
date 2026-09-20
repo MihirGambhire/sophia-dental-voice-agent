@@ -13,10 +13,29 @@ her, and takes a message when she cannot help.
 She runs entirely on free tiers and open source. Total cost to build and
 run: nothing.
 
+## Try it
+
+**[sophia-dental-voice-agent.onrender.com](https://sophia-dental-voice-agent.onrender.com)**
+
+Give the first load up to a minute. The free plan puts the server to
+sleep after fifteen minutes with nobody on it, and the first request
+wakes it.
+
+Press start, allow the microphone, and say hello. Call as one of the
+demo patients listed on the page, or register as a new one. Every
+browser gets its own copy of the database, so nothing you do there
+affects anyone else, and "Reset demo data" puts it back.
+
+Worth trying: say you have severe toothache and want to be seen today,
+cancel an appointment less than 24 hours ahead and listen to the warning,
+ask what an NHS check up costs, or give a date of birth that does not
+match the name and watch her reveal nothing.
+
 ---
 
 ## Contents
 
+- [Try it](#try-it)
 - [Why a dental practice](#why-a-dental-practice)
 - [What Sophia can do](#what-sophia-can-do)
 - [Design principle: the model talks, the code decides](#design-principle-the-model-talks-the-code-decides)
