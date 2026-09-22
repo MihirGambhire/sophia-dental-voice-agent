@@ -15,7 +15,11 @@ import pytest
 from sophia import clock, config
 from sophia.tools import SophiaTools, ToolError
 
-MONDAY_10 = clock.combine(date(2026, 9, 21), time(10))
+# Anchored on the next open day from today, not a fixed date. The seed
+# data is built relative to the day the database is created, so a
+# hardcoded anchor goes stale the moment the calendar passes it, and
+# every urgent slot test starts failing on a day nobody changed code.
+WEEKDAY_10 = clock.combine(clock.next_open_day(clock.today()), time(10))
 
 NEW_CALLER = [
     "Hi, I've never been to you before, can I book a check up?",
@@ -26,7 +30,7 @@ NEW_CALLER = [
 ]
 
 
-def caller(conn, said=NEW_CALLER, when=MONDAY_10):
+def caller(conn, said=NEW_CALLER, when=WEEKDAY_10):
     session = SophiaTools(conn, now=when)
     session.caller_heard = list(said)
     return session
@@ -141,7 +145,7 @@ def test_a_new_patient_cannot_be_booked_an_nhs_check_up(conn):
 def test_a_lapsed_nhs_patient_is_a_new_nhs_patient_too(conn):
     """Carlos Reyes last attended just over three years ago."""
     row = conn.execute("SELECT * FROM patients WHERE code = 'reyes'").fetchone()
-    session = SophiaTools(conn, now=MONDAY_10)
+    session = SophiaTools(conn, now=WEEKDAY_10)
     assert session.verify_patient(row["full_name"], row["dob"], row["postcode"])["verified"]
 
     result = session.recommend_appointment_type("check_up")
@@ -301,7 +305,7 @@ def test_a_new_record_reaches_no_one_elses_appointments(conn):
 # Urgent care for someone with no dentist
 # ---------------------------------------------------------------------------
 
-MONDAY_9 = clock.combine(date(2026, 9, 21), time(9))
+WEEKDAY_9 = clock.combine(clock.next_open_day(clock.today()), time(9))
 
 
 def book_urgent(session):
@@ -314,7 +318,7 @@ def test_a_new_caller_who_asks_for_nhs_urgent_care_pays_the_nhs_charge(conn):
     Every new record is private, and the urgent booking used to take the
     fee from the record alone, so this caller was charged £85.
     """
-    session = caller(conn, said=[*NEW_CALLER, "On the NHS please."], when=MONDAY_9)
+    session = caller(conn, said=[*NEW_CALLER, "On the NHS please."], when=WEEKDAY_9)
     register(session)
     result = book_urgent(session)
 
@@ -323,7 +327,7 @@ def test_a_new_caller_who_asks_for_nhs_urgent_care_pays_the_nhs_charge(conn):
 
 
 def test_a_new_caller_who_says_nothing_about_funding_is_booked_privately(conn):
-    session = caller(conn, when=MONDAY_9)
+    session = caller(conn, when=WEEKDAY_9)
     register(session)
     assert book_urgent(session)["fee"] == "£85"
 

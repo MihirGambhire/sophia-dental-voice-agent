@@ -23,9 +23,12 @@ def a_weekday_at(hour, minute=0, days_ahead=0):
     """
     A timestamp on a weekday, so tests do not fail on Saturdays.
 
-    Monday 21 September 2026 is the anchor.
+    Anchored on the next open day from today, not a fixed date. The seed
+    data is built relative to the day the database is created, so a
+    hardcoded anchor goes stale the moment the calendar passes it, and
+    every urgent slot test starts failing on a day nobody changed code.
     """
-    day = date(2026, 9, 21) + timedelta(days=days_ahead)
+    day = clock.next_open_day(clock.today()) + timedelta(days=days_ahead)
     return clock.combine(day, time(hour, minute))
 
 

@@ -30,3 +30,4 @@ Thumbs.db
 # never be committed. The working copy lives outside this repository.
 SOPHIA_PROJECT_CONTEXT.md
 *.private.md
+graphify-out/

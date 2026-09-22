@@ -23,7 +23,7 @@ from sophia.tools import SophiaTools
 
 
 def a_weekday_at(hour, minute=0):
-    return clock.combine(date(2026, 9, 21), time(hour, minute))
+    return clock.combine(clock.next_open_day(clock.today()), time(hour, minute))
 
 
 # ---------------------------------------------------------------------------
@@ -305,11 +305,12 @@ def test_a_runaway_tool_loop_is_stopped_and_offers_a_message(conn):
 
 
 def test_the_system_prompt_carries_the_current_time_and_open_state(conn):
-    agent = agent_with(conn, [text_response("ok")], when=a_weekday_at(7, 30))
+    when = a_weekday_at(7, 30)
+    agent = agent_with(conn, [text_response("ok")], when=when)
     agent.say("hello")
 
     system = agent.client.requests[0]["messages"][0]["content"]
-    assert "Monday the 21st of September" in system
+    assert clock.spoken_date(when.date()) in system
     assert "practice is closed" in system
 
 

@@ -15,11 +15,15 @@ from sophia import clock, demo
 from sophia.agent_text import SophiaAgent
 from sophia.tools import SophiaTools
 
-MONDAY_10 = clock.combine(date(2026, 9, 21), time(10))
+# Anchored on the next open day from today, not a fixed date. The seed
+# data is built relative to the day the database is created, so a
+# hardcoded anchor goes stale the moment the calendar passes it, and
+# every urgent slot test starts failing on a day nobody changed code.
+WEEKDAY_10 = clock.combine(clock.next_open_day(clock.today()), time(10))
 
 
 def test_the_demo_list_shows_seeded_patients_worth_trying(conn):
-    cards = demo.patient_cards(conn, now=MONDAY_10)
+    cards = demo.patient_cards(conn, now=WEEKDAY_10)
     names = [card["name"] for card in cards]
 
     assert "Margaret Hollis" in names
@@ -38,11 +42,11 @@ def test_the_demo_list_shows_a_patients_next_appointment(conn):
 
 
 def test_someone_the_tester_registered_appears_so_they_can_call_back(conn):
-    session = SophiaTools(conn, now=MONDAY_10)
+    session = SophiaTools(conn, now=WEEKDAY_10)
     session.caller_heard = ["Priya Sharma", "fourth of May nineteen ninety", "W A 1 3 B X", "07700 900123"]
     session.register_new_patient("Priya Sharma", "1990-05-04", "WA1 3BX", "07700 900123")
 
-    card = demo.patient_cards(conn, now=MONDAY_10)[-1]
+    card = demo.patient_cards(conn, now=WEEKDAY_10)[-1]
     assert card["name"] == "Priya Sharma"
     assert card["registered_by_you"] is True
     assert card["phone"] == "07700900123"
@@ -54,7 +58,7 @@ def test_someone_the_tester_registered_appears_so_they_can_call_back(conn):
 
 
 def agent(conn):
-    return SophiaAgent(conn, now=MONDAY_10, client=SimpleNamespace())
+    return SophiaAgent(conn, now=WEEKDAY_10, client=SimpleNamespace())
 
 
 def test_an_unidentified_caller_is_asked_new_or_existing_before_details(conn):
